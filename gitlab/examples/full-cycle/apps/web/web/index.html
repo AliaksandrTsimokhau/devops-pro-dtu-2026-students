@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Release board</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><a class="brand" href="/">RB<span>Release board</span></a><span class="eyebrow">LIVE APPLICATION</span></header>
+    <section class="intro"><p class="eyebrow">FROM COMMIT TO CLUSTER</p><h1>See what shipped.</h1><p>A live view of this application's release. Change the code, pass the gates, and watch the next commit appear here.</p></section>
+    <section class="panel" aria-labelledby="release-heading">
+      <div class="panel-top"><h2 id="release-heading">Current release</h2><span id="status" class="status" role="status" aria-live="polite">Connecting...</span></div>
+      <dl>
+        <div class="wide"><dt>Commit</dt><dd id="version">Waiting for the application</dd></div>
+        <div><dt>Environment</dt><dd id="environment">-</dd></div>
+        <div><dt>Chart version</dt><dd id="release">-</dd></div>
+        <div class="wide"><dt>Serving instance</dt><dd id="hostname">-</dd></div>
+      </dl>
+      <footer><p id="checked" aria-live="polite">Checking the release API...</p><button id="refresh" type="button">Check again</button></footer>
+      <p id="error" class="error" role="alert" hidden></p>
+      <a id="pipeline" class="pipeline" hidden>Open the pipeline <span aria-hidden="true">↗</span></a>
+    </section>
+    <p class="note">The commit is embedded in the image at build time. A green pipeline must serve that exact release.</p>
+  </main>
+</body>
+</html>

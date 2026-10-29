@@ -1,0 +1,180 @@
+.on-default:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+.helm:
+  image:
+    name: $HELM_IMAGE
+    entrypoint: [""]
+
+.trivy:
+  image:
+    name: $TRIVY_IMAGE
+    entrypoint: [""]
+  variables:
+    TRIVY_NO_PROGRESS: "true"
+
+.docker:
+  image: $DOCKER_IMAGE
+  services:
+    - name: $DIND_IMAGE
+      alias: docker
+      command: ["--mtu=1450"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - 'for attempt in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done'
+    - docker info
+
+go-tests:
+  stage: verify
+  image: $GO_IMAGE
+  script:
+    - cd apps/web
+    - test -z "$(gofmt -l .)"
+    - go vet ./...
+    - go test -race -coverprofile=coverage.out ./...
+  artifacts:
+    when: always
+    paths: [apps/web/coverage.out]
+    expire_in: 1 week
+
+frontend-tests:
+  stage: verify
+  image: $NODE_IMAGE
+  script:
+    - node --check apps/web/web/app.js
+    - node --test apps/web/frontend_test.mjs
+
+chart-lint:
+  extends: .helm
+  stage: verify
+  script:
+    - helm lint charts/release-board --strict --namespace release-board-ci
+    - helm lint charts/lab-access --strict --namespace gitlab-agent --set targetNamespace=full-cycle-999
+    - helm template release-board charts/release-board --namespace release-board-ci > rendered.yaml
+  artifacts:
+    paths: [rendered.yaml]
+    expire_in: 1 day
+
+manifest-schema:
+  stage: verify
+  image:
+    name: ghcr.io/yannh/kubeconform:v0.8.0-alpine
+    entrypoint: [""]
+  needs: [chart-lint]
+  script:
+    - kubeconform -strict -summary -kubernetes-version 1.36.0 rendered.yaml
+
+security-source:
+  extends: .trivy
+  stage: verify
+  script:
+    - trivy fs --scanners vuln,secret --skip-dirs .git --severity HIGH,CRITICAL --exit-code 1 --format json --output security-source.json .
+  artifacts:
+    when: always
+    paths: [security-source.json]
+    expire_in: 1 week
+
+security-config:
+  extends: .trivy
+  stage: verify
+  needs: [chart-lint]
+  script:
+    - trivy config --severity HIGH,CRITICAL --exit-code 1 --format json --output security-dockerfile.json apps/web
+    - trivy config --severity HIGH,CRITICAL --exit-code 1 --format json --output security-config.json rendered.yaml
+  artifacts:
+    when: always
+    paths: [security-dockerfile.json, security-config.json]
+    expire_in: 1 week
+
+build-image:
+  extends: .docker
+  stage: build
+  script:
+    - docker build --pull --build-arg APP_VERSION="$CI_COMMIT_SHA" --tag "$IMAGE_REF" apps/web
+    - docker save --output image.tar "$IMAGE_REF"
+  artifacts:
+    access: maintainer
+    paths: [image.tar]
+    expire_in: 1 day
+
+scan-image:
+  extends: .trivy
+  stage: scan
+  needs: [build-image]
+  script:
+    - trivy image --input image.tar --format cyclonedx --output sbom.cdx.json
+    - trivy image --input image.tar --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --format json --output security-image.json
+  artifacts:
+    when: always
+    paths: [security-image.json, sbom.cdx.json]
+    expire_in: 1 week
+
+publish-image:
+  extends: [.docker, .on-default]
+  stage: publish
+  needs: [build-image, scan-image]
+  script:
+    - docker load --input image.tar
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+    - docker push "$IMAGE_REF"
+    - 'IMAGE_DIGEST=$(docker inspect --format="{{index .RepoDigests 0}}" "$IMAGE_REF" | sed "s/.*@//")'
+    - 'printf "IMAGE_DIGEST=%s\n" "$IMAGE_DIGEST" > release.env'
+  artifacts:
+    reports:
+      dotenv: release.env
+    expire_in: 1 week
+
+publish-chart:
+  extends: [.helm, .on-default]
+  stage: publish
+  needs: [publish-image]
+  script:
+    - export CHART_VERSION="0.${CI_PIPELINE_IID}.${CI_JOB_ID}"
+    - sh ci/package-chart.sh
+    - helm lint dist/release-board --strict --namespace release-board-ci
+    - helm package dist/release-board --version "$CHART_VERSION" --app-version "$CI_COMMIT_SHA" --destination dist
+    - echo "$CI_REGISTRY_PASSWORD" | helm registry login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+    - helm push "dist/release-board-${CHART_VERSION}.tgz" "oci://${CI_REGISTRY_IMAGE}/charts"
+    - 'printf "CHART_VERSION=%s\nIMAGE_DIGEST=%s\n" "$CHART_VERSION" "$IMAGE_DIGEST" > release.env'
+  artifacts:
+    reports:
+      dotenv: release.env
+    paths: [dist/*.tgz]
+    expire_in: 1 week
+
+deploy-student:
+  extends: [.helm, .on-default]
+  stage: deploy
+  needs: [publish-chart]
+  interruptible: false
+  resource_group: student-$CI_PROJECT_ID
+  script:
+    - sh ci/deploy.sh
+  environment:
+    name: student
+    url: http://$APP_HOST
+    on_stop: stop-student
+  artifacts:
+    when: always
+    paths: [diagnostics/, smoke-response.json]
+    expire_in: 1 week
+
+stop-student:
+  extends: .helm
+  stage: cleanup
+  needs: []
+  interruptible: false
+  resource_group: student-$CI_PROJECT_ID
+  script:
+    - 'test -n "$KUBE_CONTEXT" && test "$KUBE_NAMESPACE" != default'
+    - helm uninstall "$RELEASE" --namespace "$KUBE_NAMESPACE" --kube-context "$KUBE_CONTEXT" --wait
+  environment:
+    name: student
+    action: stop
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  allow_failure: true

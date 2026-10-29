@@ -7,11 +7,15 @@ Labs are ordered from simple to complex. Each lab builds on concepts from the pr
 1. [`gitlab_ci_lab_walkthrough.md`](gitlab_ci_lab_walkthrough.md) — модель выполнения GitLab CI: jobs, stages, artifacts, `needs`.
 2. [`gitlab_runner_lab.md`](gitlab_runner_lab.md) — runner, executors и теги (нужно для лаб с self-hosted инстансом).
 3. [`gitlab_ci_lab_rules.md`](gitlab_ci_lab_rules.md) — `rules`, `workflow:rules`.
-4. Дальше — лабы Lab 1–7 ниже.
+4. Дальше — лабы Lab 1–8 ниже.
 
-Лабы 1–7 нумерованы отдельно от этого списка и ссылаются друг на друга по номерам.
+Лабы 1–8 нумерованы отдельно от этого списка и ссылаются друг на друга по номерам.
 
 ---
+
+## Servercore stand
+
+Start with [Servercore onboarding](servercore_gitlab.md) if you have a student VM. GitLab is already installed; use its Kubernetes runner and your kind cluster.
 
 ## Prerequisites (all labs)
 
@@ -161,6 +165,18 @@ Path A additionally requires AWS credentials.
 
 ---
 
+## Lab 8 — Full CI/CD: live application and recovery
+
+**File:** [gitlab_ci_lab_full_cycle.md](gitlab_ci_lab_full_cycle.md)
+
+Build and scan a web application image, publish the image and Helm OCI chart to GitLab Registry, and deploy through a namespace-scoped Agent to your VM's kind cluster. Verify the deployed commit in the live Release Board.
+
+Four break/fix exercises cover an API regression, a synthetic leaked token, a privileged workload and a failed readiness rollout with rollback.
+
+**Duration:** 2–3 hours after setup. **Requires:** Kubernetes runner tagged `kubernetes`, privileged DinD on your training VM, trusted Registry HTTPS, Agent and Traefik ingress. See the [complete example](examples/full-cycle).
+
+---
+
 ## Dependency Map
 
 ```
@@ -185,6 +201,9 @@ Lab 6 (Cosign)
 
 Lab 7 (Five environments)
     └── builds on Lab 4 (Terraform)
+
+Lab 8 (Live full cycle)
+    └── builds on Lab 2, Lab 5, Helm deployment and Agent
 ```
 
 ---
@@ -200,6 +219,7 @@ Lab 7 (Five environments)
 | 5 Trivy | **Yes** | **Yes** | ✅ |
 | 6 Cosign | **Yes** | **Yes** | ✅ |
 | 7 Five envs | No | No | ✅ |
+| 8 Full cycle | **Yes** | **Yes** | Student VM runner + Agent |
 
 ---
 

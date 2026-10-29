@@ -1,0 +1,7 @@
+apiVersion: v2
+name: release-board
+description: Observable web release with probes, private registry pulls and a release test.
+type: application
+version: 0.1.0
+appVersion: development
+kubeVersion: '>=1.30.0-0'

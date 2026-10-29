@@ -1,0 +1,12 @@
+.env
+.env.*
+**/coverage.out
+/dist/
+/image.tar
+/release.env
+/rendered.yaml
+/security-*.json
+/sbom.cdx.json
+/diagnostics/
+/smoke-response.json
+/ci-private-values.yaml

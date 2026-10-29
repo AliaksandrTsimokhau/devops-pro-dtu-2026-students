@@ -1,0 +1,5 @@
+apiVersion: v2
+name: lab-access
+description: Operator-owned namespace and namespace-scoped permissions for the GitLab Agent.
+type: application
+version: 0.1.0

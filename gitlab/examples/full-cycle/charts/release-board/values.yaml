@@ -1,0 +1,31 @@
+replicaCount: 2
+image:
+  repository: registry.example.com/student/release-board/web
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+registryCredentials:
+  create: false
+  server: ""
+  username: ""
+  password: ""
+ingress:
+  enabled: true
+  className: traefik
+  host: release-board.example.test
+environment: student
+pipelineURL: ""
+readinessPath: /readyz
+resources:
+  requests:
+    cpu: 50m
+    memory: 64M
+  limits:
+    memory: 64M
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  privileged: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]

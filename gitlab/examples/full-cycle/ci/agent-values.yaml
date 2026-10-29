@@ -1,0 +1,25 @@
+# Operator setup only. Agent token is supplied through --set-file, never committed.
+replicas: 1
+rbac:
+  create: false
+serviceAccount:
+  create: false
+  name: release-board-agent
+config:
+  operational_container_scanning:
+    enabled: false
+resources:
+  requests:
+    cpu: 50m
+    memory: 128M
+  limits:
+    memory: 128M
+securityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault

@@ -14,3 +14,5 @@
 | [07-practical-cases-slides.pdf](07-practical-cases-slides.pdf) | [practical-cases/](practical-cases/) |
 | [08-gitlab-basics-slides.pdf](08-gitlab-basics-slides.pdf) | [gitlab/](gitlab/) |
 | [09-gitlab-slides.pdf](09-gitlab-slides.pdf) | [gitlab/](gitlab/) |
+
+Новая лабораторная: [полный CI/CD цикл с живым приложением](gitlab/gitlab_ci_lab_full_cycle.md), GitLab Registry, Helm и kind.

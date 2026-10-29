@@ -1,0 +1,41 @@
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+    # A reverted drill can have an empty MR diff and still needs a green rerun.
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+      changes:
+        - apps/web/**/*
+        - charts/release-board/**/*
+        - charts/lab-access/**/*
+        - ci/**/*
+        - .gitlab/ci/**/*
+        - .gitlab-ci.yml
+    - when: never
+
+stages: [verify, build, scan, publish, deploy, cleanup]
+
+default:
+  tags: [kubernetes]
+  interruptible: true
+  retry:
+    max: 1
+    when: [runner_system_failure]
+
+variables:
+  GO_IMAGE: golang:1.27.3-bookworm
+  NODE_IMAGE: node:24.22.2-bookworm-slim
+  HELM_IMAGE: alpine/helm:4.3.1
+  TRIVY_IMAGE: aquasec/trivy:0.76.1
+  DOCKER_IMAGE: docker:29.9.2-cli
+  DIND_IMAGE: docker:29.9.2-dind
+  IMAGE_REF: $CI_REGISTRY_IMAGE/web:$CI_COMMIT_SHA
+  KUBE_NAMESPACE: full-cycle-$CI_PROJECT_ID
+  RELEASE: release-board
+  DEPLOY_TIMEOUT: 3m
+
+include:
+  - local: .gitlab/ci/web.yml

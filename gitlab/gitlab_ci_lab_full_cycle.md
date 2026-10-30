@@ -16,7 +16,7 @@ Start with [Servercore onboarding](servercore_gitlab.md), [Runner](gitlab_runner
 | Helm rollout, Helm test and ingress smoke check | Verify readiness, service routing and the actual deployed commit |
 | Serialized deploys and automatic rollback | Keep a failed release from replacing the last working version |
 
-The Kubernetes executor runs jobs in the student's kind cluster. Kaniko builds the image without a Docker daemon and saves it as an archive; skopeo publishes that same archive. GitLab Agent gives deployment jobs access through a namespace-scoped service account. Traefik serves the application on the VM. The Helm chart uses a digest-pinned private image, two replicas, probes, resource requests, a disruption budget and a non-root container with a read-only filesystem.
+The Kubernetes executor runs jobs in the student's kind cluster. Buildah builds the image without a Docker daemon and saves it as an archive; skopeo publishes that same archive. GitLab Agent gives deployment jobs access through a namespace-scoped service account. Traefik serves the application on the VM. The Helm chart uses a digest-pinned private image, two replicas, probes, resource requests, a disruption budget and a non-root container with a read-only filesystem.
 
 ## 1. Prepare the project and stand
 
@@ -122,6 +122,16 @@ Validate the combined configuration with GitLab CI Lint. After the Agent and all
 Inspect the source and configuration scan reports, image vulnerability report and CycloneDX SBOM in artifacts. These are ordinary Trivy JSON reports, not GitLab-specific security dashboard reports. Security gates fail on HIGH or CRITICAL findings; do not mark them optional to obtain a green pipeline. A new vulnerability database can make an unchanged image fail later: update the dependency or base image and build a new release.
 
 The pipeline saves the built image, scans that archive and publishes it without rebuilding. The chart is copied to a staging directory and stamped with the image digest. Its version `0.<pipeline IID>.<job ID>` stays unique on retries. Source values never receive registry credentials. Credentials supplied during deployment become Kubernetes and Helm release Secrets; keep access to those Secrets restricted.
+
+Confirm that the image reached your project's registry. Open **Deploy > Container Registry**: the repository `<your-project>/web` must have a tag equal to the full commit SHA, and its digest must match `IMAGE_DIGEST` in the `publish-image` job log. The chart appears under `<your-project>/charts/release-board` after `publish-chart`. From the VM, check the same thing with the Deploy Token's `read_registry` access (skopeo asks for the token, so it stays out of your shell history):
+
+```sh
+REGISTRY=gitlab.example.com:5050 # replace with your registry host, as in CI_REGISTRY
+skopeo login "$REGISTRY" -u "<deploy token username>"
+skopeo inspect --format '{{.Digest}}' "docker://$REGISTRY/<group>/<project>/web:<full commit SHA>"
+```
+
+If `publish-image` fails, read the last lines of its log: `denied: requested access to the resource is denied` or `unauthorized` means the project's Container Registry is disabled or the job did not run on the default branch; `x509` or `no such host` means the registry name or certificate does not work from the runner, so fix that in the stand instead of adding skip-TLS flags. Jobs on merge request branches never publish.
 
 Open GitLab's `student` environment URL. The board must show the full default-branch commit and link to the pipeline that deployed it. Click **Check again**. Compare its chart version with the OCI chart tag. A green pod alone does not prove that the correct release reached the browser: the final smoke check verifies the compiled commit through ingress.
 

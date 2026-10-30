@@ -15,10 +15,14 @@
     TRIVY_NO_PROGRESS: "true"
 
 # Images are built and pushed without a Docker daemon, so the runner needs no privileged pods.
-.kaniko:
+.buildah:
   image:
-    name: $KANIKO_IMAGE
+    name: $BUILDAH_IMAGE
     entrypoint: [""]
+  variables:
+    # vfs and chroot isolation need no privileges, device access or user namespaces.
+    STORAGE_DRIVER: vfs
+    BUILDAH_ISOLATION: chroot
 
 .skopeo:
   image:
@@ -88,18 +92,12 @@ security-config:
     expire_in: 1 week
 
 build-image:
-  extends: .kaniko
+  extends: .buildah
   stage: build
   script:
-    # --no-push with --tar-path saves the image as an archive: the same bytes are scanned and then published.
-    - >-
-      /kaniko/executor
-      --context "$CI_PROJECT_DIR/apps/web"
-      --dockerfile "$CI_PROJECT_DIR/apps/web/Dockerfile"
-      --build-arg APP_VERSION="$CI_COMMIT_SHA"
-      --destination "$IMAGE_REF"
-      --no-push
-      --tar-path image.tar
+    - buildah build --format docker --build-arg APP_VERSION="$CI_COMMIT_SHA" --tag "$IMAGE_REF" apps/web
+    # The image is saved as an archive: the same bytes are scanned and then published.
+    - buildah push "$IMAGE_REF" "docker-archive:image.tar:$IMAGE_REF"
   artifacts:
     access: maintainer
     paths: [image.tar]

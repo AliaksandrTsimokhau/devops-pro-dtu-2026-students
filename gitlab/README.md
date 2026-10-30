@@ -7,7 +7,9 @@ Labs are ordered from simple to complex. Each lab builds on concepts from the pr
 1. [`gitlab_ci_lab_walkthrough.md`](gitlab_ci_lab_walkthrough.md) — модель выполнения GitLab CI: jobs, stages, artifacts, `needs`.
 2. [`gitlab_runner_lab.md`](gitlab_runner_lab.md) — runner, executors и теги (нужно для лаб с self-hosted инстансом).
 3. [`gitlab_ci_lab_rules.md`](gitlab_ci_lab_rules.md) — `rules`, `workflow:rules`.
-4. Дальше — лабы Lab 1–8 ниже.
+4. [`gitlab_agent_k8s_lab.md`](gitlab_agent_k8s_lab.md) — деплой в kind через GitLab Agent (нужна [Helm-лаба](../helm/helm_gitlab_cicd_lab.md)).
+5. [`gitlab_ci_lab_devsecops.md`](gitlab_ci_lab_devsecops.md) — сканеры безопасности в обычных container jobs.
+6. Дальше — лабы Lab 1–8 ниже.
 
 Лабы 1–8 нумерованы отдельно от этого списка и ссылаются друг на друга по номерам.
 
@@ -98,7 +100,7 @@ Use GitLab as a Terraform/OpenTofu HTTP state backend. Run `plan → apply → d
 - Saved plan and JSON artifacts passed to apply
 - Manual approval gates (`when: manual`)
 
-**Requires:** Container executor, Maintainer/Owner for state writes, GitLab 18.4+ for the artifact access setting
+**Requires:** Container executor with access to `ghcr.io`, Maintainer/Owner for state writes, GitLab 18.4+ for the artifact access setting
 
 ---
 
@@ -139,7 +141,7 @@ Sign Docker images using Cosign keyless flow (GitLab OIDC → Sigstore Fulcio) a
 - Admission control patterns (Kyverno)
 
 **Requires:** **Privileged runner (DinD)**, Container Registry enabled, GitLab 16.0+ (for `id_tokens`).  
-The public Sigstore flow requires **GitLab.com**. Self-managed needs its own Sigstore infrastructure; configuring OIDC alone is insufficient.
+On the Servercore stand this lab is not supported: use GitLab.com. The public Sigstore flow requires **GitLab.com**. Self-managed needs its own Sigstore infrastructure; configuring OIDC alone is insufficient.
 
 ---
 
@@ -157,11 +159,12 @@ Build a production-grade CD pipeline with parent → first-layer → grand-child
 - `environment: on_stop:` — auto-destroy on MR close
 - `rules:` matrix: branch / tag / manual triggers per environment
 - GitLab-managed Terraform state per environment
-- CODEOWNERS + protected environments for governance
+- Shared OpenTofu jobs from Lab 4 (`.gitlab-ci/opentofu.yml`, OpenTofu 1.13.1), a separate state per environment
+- Governance: CODEOWNERS and protected environments need Premium/Ultimate; on Free/CE restrict pushes and release tags
 - Two infra options: **Path A — AWS**, **Path B — GitLab provider** (no AWS account needed)
 
-**Requires:** Container executor, OpenTofu knowledge, GitLab 18.4+.
-Path A additionally requires AWS credentials.
+**Requires:** finished Lab 4 (copy its `.gitlab-ci/opentofu.yml`), container executor, GitLab 18.4+.
+Path B also needs an Owner role in a sandbox (sub)group and a PAT with `api` scope. Path A additionally requires AWS credentials.
 
 ---
 
@@ -174,7 +177,7 @@ Ship a working web application from a monorepo to the student's kind cluster. Bu
 
 Includes four break/fix exercises: API regression, synthetic leaked token, privileged workload and failed readiness rollout with rollback.
 
-**Requires:** Servercore onboarding, Kubernetes executor tagged `kubernetes`, an unprivileged runner without DinD (images are built with buildah), trusted Registry HTTPS, Agent and reachable Traefik ingress. Start after Labs 2 and 5 and the Helm/Agent labs.
+**Requires:** Servercore onboarding, Kubernetes executor tagged `kubernetes`, an unprivileged runner without DinD (images are built with buildah), trusted Registry HTTPS, Agent and reachable Traefik ingress. Start after Lab 2 and the [Helm](../helm/helm_gitlab_cicd_lab.md) and [Agent](gitlab_agent_k8s_lab.md) labs; Lab 5 is recommended but not required (it needs privileged, this lab does not).
 
 ---
 
@@ -204,7 +207,7 @@ Lab 7 (Five environments)
     └── builds on Lab 4 (Terraform)
 
 Lab 8 (Live full cycle)
-    └── builds on Lab 2, Lab 5, Helm deployment and Agent
+    └── builds on Lab 2, Helm deployment and Agent (Lab 5 recommended)
 ```
 
 ---
@@ -218,7 +221,7 @@ Lab 8 (Live full cycle)
 | 3 Components | No | No | ✅ |
 | 4 Terraform | No | No | ✅ |
 | 5 Trivy | **Yes** | **Yes** (stand: operator opt-in per VM) | ✅ |
-| 6 Cosign | **Yes** | **Yes** (stand: operator opt-in per VM) | ✅ |
+| 6 Cosign | **Yes** | **Yes** (stand: not supported, use GitLab.com) | ✅ |
 | 7 Five envs | No | No | ✅ |
 | 8 Full cycle | No (buildah) | No | Student VM runner + Agent |
 

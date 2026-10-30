@@ -17,7 +17,7 @@ Build a small monorepo with a Go web application, its browser UI, Helm charts an
 | **Container Registry** | Stores the image (`$CI_REGISTRY_IMAGE/web`) and the Helm chart (`oci://$CI_REGISTRY_IMAGE/charts/release-board`). |
 | **Traefik** | Serves the application on your VM. |
 
-The pipeline stages are `verify -> build -> scan -> publish -> deploy`. Only the default branch publishes and deploys.
+The pipeline stages are `verify -> build -> scan -> publish -> deploy`, plus a `cleanup` stage that holds only the manual **Stop** job. Only the default branch publishes and deploys.
 
 | Gate | What it proves |
 |---|---|
@@ -142,8 +142,8 @@ Three names must line up. Keep them identical:
 | Name you register in GitLab (Step 9) | `full-cycle` |
 | `KUBE_CONTEXT` CI variable (Step 13) | `<project path>:full-cycle` |
 
-> **Already did the Agent lab and your Agent is active?** Check **Operate > Kubernetes clusters**: if an Agent (for example `dtu-agent`) shows **Connected**, you may skip **Step 9 and Step 10** only if that Agent runs with the restricted service account `release-board-agent` (the setting in `ci/agent-values.yaml`). Then use **its name** instead of `full-cycle` in Steps 8 and 13.
-> An Agent installed the way the Agent lab does it has **cluster-admin** rights. Do **not** reuse it here: Step 11 would fail, and a deploy job would hold full cluster access. In that case do Steps 7-11 as written. The old Agent can keep running next to the new one, because a job picks the Agent by its context name (`KUBE_CONTEXT`). Remove the old Agent after the lab if you do not need it.
+> **Already have an Agent?** Check **Operate > Kubernetes clusters**. You may skip **Step 9 and Step 10** only for an Agent that is **Connected** and was installed with the restricted service account `release-board-agent` (the setting in `ci/agent-values.yaml`), for example from an earlier run of this lab. Then use **its name** instead of `full-cycle` in Steps 8 and 13.
+> An Agent installed the way the Agent lab does it (for example `dtu-agent`) has **cluster-admin** rights, so it does not qualify. Do **not** reuse it here: Step 11 would fail, and a deploy job would hold full cluster access. In that case do Steps 7-11 as written. The old Agent can keep running next to the new one, because a job picks the Agent by its context name (`KUBE_CONTEXT`). Remove the old Agent after the lab if you do not need it.
 > Steps 7, 8, 11 and 12 onward are always needed.
 
 ### Step 7. Install the access chart
@@ -159,7 +159,7 @@ helm upgrade --install full-cycle-access charts/lab-access \
 
 **Expect:** the release is `deployed`. Namespaces `gitlab-agent` and `full-cycle-<PROJECT_ID>` exist (`kubectl get ns`).
 
-**Why:** the chart creates a `release-board-agent` service account whose Role covers releases in `full-cycle-<PROJECT_ID>` **only**. It grants no cluster-admin role and cannot create namespaces. It also lets the Agent hold its leader-election lease inside `gitlab-agent`; without that the Agent logs `Error retrieving lease lock` and never serves jobs.
+**Why:** the chart creates a `release-board-agent` service account whose Role covers releases in `full-cycle-<PROJECT_ID>` **only**. It grants no cluster-admin role and cannot create namespaces. It also lets the Agent hold its leader-election lease inside `gitlab-agent`; without that the Agent logs `Error retrieving lease lock` and never serves jobs. The chart keeps the namespace `full-cycle-<PROJECT_ID>` on uninstall. If you repeat this step after Step 24 without deleting the namespace, Helm may refuse to adopt it ("exists and cannot be imported"): delete the namespace first (Step 24, item 6).
 
 ### Step 8. Add the Agent configuration and push it
 
@@ -246,7 +246,7 @@ git push -o ci.skip
 
 **Do:**
 1. In GitLab: **Operate > Kubernetes clusters**. Look at the status of `full-cycle`.
-2. On the VM, with the administrator kubeconfig:
+2. On the VM, with the administrator kubeconfig (in a new shell, set `PROJECT_ID=<ID from Step 5>` again first):
 
 ```sh
 kubectl auth can-i create deployments -n "full-cycle-${PROJECT_ID}" \
@@ -284,7 +284,7 @@ kubectl auth can-i create namespaces \
 | Variable | Value | Visibility |
 |---|---|---|
 | `KUBE_CONTEXT` | `<project path>:full-cycle`, for example `students/release-board:full-cycle` | **Visible** |
-| `APP_HOST` | `release-board.<public-ip-with-dashes>.sslip.io`, or an operator-provided DNS name (no scheme, no port) | Visible |
+| `APP_HOST` | `release-board.<public-ip-with-dashes>.sslip.io`, or an operator-provided DNS name (lowercase, no scheme, no port) | Visible |
 | `INGRESS_IP` | your VM's **private** IP, for example `10.42.0.11` | Visible |
 | `REGISTRY_PULL_USER` | Deploy Token username from Step 12 | **Masked** |
 | `REGISTRY_PULL_PASSWORD` | Deploy Token secret from Step 12 | **Masked** |
@@ -314,7 +314,7 @@ kubectl auth can-i create namespaces \
 2. **Build > Pipelines > New pipeline**, branch `main`, then **New pipeline**.
 3. Open the pipeline to watch the stages.
 
-**Expect:** the lint says the configuration is valid. The pipeline runs `verify -> build -> scan -> publish -> deploy` and every job is green. Later pushes to `main` start pipelines automatically.
+**Expect:** the lint says the configuration is valid. The pipeline runs `verify -> build -> scan -> publish -> deploy` (the manual `stop-student` job in `cleanup` stays waiting) and every job is green. Later pushes to `main` start pipelines automatically.
 
 ### Step 16. Check the job artifacts
 
@@ -330,8 +330,8 @@ kubectl auth can-i create namespaces \
 | `security-config` | `security-dockerfile.json`, `security-config.json` | Dockerfile and rendered-manifest findings |
 | `build-image` | `image.tar` | the saved image (visible to Maintainers only) |
 | `scan-image` | `security-image.json`, `sbom.cdx.json` | image vulnerabilities and the CycloneDX SBOM |
-| `publish-image` | `release.env` | `IMAGE_DIGEST=sha256:...` |
-| `publish-chart` | `dist/release-board-<version>.tgz`, `release.env` | the packaged chart and its version |
+| `publish-image` | `release.env` | `IMAGE_DIGEST=sha256:...` (also printed at the end of the job log) |
+| `publish-chart` | `dist/release-board-<version>.tgz`, `release.env` | the packaged chart; `release.env` holds `CHART_VERSION` and `IMAGE_DIGEST` (also printed in the log) |
 | `deploy-student` | `diagnostics/history.txt`, `diagnostics/status.txt`, `smoke-response.json` | Helm history and status, and the smoke-check answer with your commit SHA |
 
 **Why:** the scan reports are ordinary Trivy JSON files, not GitLab security dashboards. Gates fail on HIGH or CRITICAL findings; never mark them optional to get a green pipeline. A new vulnerability database can fail an unchanged image later: update the dependency or base image and build a new release.
@@ -342,7 +342,7 @@ kubectl auth can-i create namespaces \
 1. Open **Deploy > Container Registry**. The list shows two repositories: `<group>/release-board/web` and `<group>/release-board/charts/release-board`.
 2. Click **`web`**. Compare the tag with your commit: **Code > Commits**, copy the full SHA.
 3. Click **`charts/release-board`** and read its tag.
-4. Open the `publish-image` job log (**Build > Jobs**) and find `IMAGE_DIGEST`.
+4. Open the `publish-image` job log (**Build > Jobs**) and find `IMAGE_DIGEST` in the last lines (the job prints `release.env`).
 
 **Expect:**
 - `web` has a tag equal to the **full commit SHA**, and the digest shown in the registry equals `IMAGE_DIGEST` in the log.
@@ -420,7 +420,7 @@ git push
 2. `python3 ci/drill.py rollout`, then commit `charts/release-board/values.yaml`.
 3. Open the MR: the static checks **pass**, because `/not-ready` is valid but operationally wrong. Merge it into this disposable environment.
 4. Watch `deploy-student` in **Build > Pipelines**. After about three minutes it fails.
-5. Inspect from the VM:
+5. Inspect from the VM (in a new shell, set `PROJECT_ID=<ID from Step 5>` again first):
 
 ```sh
 helm history release-board -n "full-cycle-${PROJECT_ID}"
@@ -430,7 +430,7 @@ kubectl get events -n "full-cycle-${PROJECT_ID}" --sort-by=.lastTimestamp
 
 **Expect:** the pipeline is red, Helm history shows the failed revision and a rollback, and the old ready replicas keep serving the **old** commit (**Operate > Environments > student > Open**). Fix it with a revert MR, merge, and check a fresh green deployment and the new commit in the browser.
 
-**Why:** Helm rolls back failed rollouts. If Helm tests or the ingress commit check fail after a successful rollout, `ci/deploy.sh` rolls back to the previous revision too. A first deployment has no healthy predecessor, so a failed check removes the installation. A project resource group stops two pipelines from updating the environment at once. Never bypass the readiness check or raise the timeout to hide the defect.
+**Why:** Helm rolls back failed rollouts. If Helm tests or the ingress commit check fail after a successful rollout, `ci/deploy.sh` rolls back to the previous revision too. A first deployment has no healthy predecessor, so a failed check removes the installation. The rollback target is the latest Helm revision, so if an earlier release is stuck in `failed` or `pending-*`, repair it by hand before deploying. A project resource group stops two pipelines from updating the environment at once. Never bypass the readiness check or raise the timeout to hide the defect.
 
 ---
 
@@ -446,7 +446,7 @@ kubectl get events -n "full-cycle-${PROJECT_ID}" --sort-by=.lastTimestamp
 
 **Do:**
 1. **Operate > Environments > student > Stop**, while the Agent and credentials still work.
-2. Confirm the application is gone: `kubectl get pods -n "full-cycle-${PROJECT_ID}"` shows none.
+2. Confirm the application is gone (set `PROJECT_ID=<ID from Step 5>` again in a new shell): `kubectl get pods -n "full-cycle-${PROJECT_ID}"` shows none.
 3. Revoke the Deploy Token: **Settings > Repository > Deploy tokens > Revoke**.
 4. Unregister the Agent: **Operate > Kubernetes clusters**, open the `full-cycle` row menu and choose **Delete**.
 5. On the VM: `helm uninstall full-cycle-agent -n gitlab-agent` and `helm uninstall full-cycle-access -n gitlab-agent`.

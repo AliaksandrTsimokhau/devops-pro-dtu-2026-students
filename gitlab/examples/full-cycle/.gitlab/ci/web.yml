@@ -127,7 +127,9 @@ publish-image:
     - echo "$CI_REGISTRY_PASSWORD" | skopeo login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
     - skopeo copy --digestfile digest.txt docker-archive:image.tar "docker://$IMAGE_REF"
     - 'printf "IMAGE_DIGEST=%s\n" "$(cat digest.txt)" > release.env'
+    - cat release.env
   artifacts:
+    paths: [release.env]
     reports:
       dotenv: release.env
     expire_in: 1 week
@@ -144,10 +146,11 @@ publish-chart:
     - echo "$CI_REGISTRY_PASSWORD" | helm registry login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
     - helm push "dist/release-board-${CHART_VERSION}.tgz" "oci://${CI_REGISTRY_IMAGE}/charts"
     - 'printf "CHART_VERSION=%s\nIMAGE_DIGEST=%s\n" "$CHART_VERSION" "$IMAGE_DIGEST" > release.env'
+    - cat release.env
   artifacts:
     reports:
       dotenv: release.env
-    paths: [dist/*.tgz]
+    paths: [dist/*.tgz, release.env]
     expire_in: 1 week
 
 deploy-student:

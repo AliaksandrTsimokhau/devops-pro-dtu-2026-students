@@ -65,6 +65,7 @@ resource "terraform_data" "example" {
   extends: .tofu
   stage: validate
   script:
+    - tofu version
     - tofu fmt -check
     - tofu validate
 
@@ -98,7 +99,7 @@ resource "terraform_data" "example" {
     - tofu destroy -lock-timeout=60s -auto-approve
 ```
 
-`TF_STATE_NAME` задаёт вызывающий pipeline. Токен backend берётся из окружения текущей job, поэтому apply не использует уже истёкший токен plan-job. Каталог `.terraform` не передаём через cache. Планы передаём как artifacts с доступом Maintainer; `plan.json` здесь обычный JSON-артефакт, без обещания MR-widget на Free.
+`TF_STATE_NAME` задаёт вызывающий pipeline. Токен backend берётся из окружения текущей job, поэтому apply не использует уже истёкший токен plan-job. Каталог `.terraform` не передаём через cache. Планы передаём как artifacts с доступом Maintainer. Сохранённый план и `plan.json` могут содержать значения переменных (в [лабе с пятью окружениями](gitlab_ci_lab_five_envs.md) это PAT), поэтому артефакты живут сутки, а секреты после лабы отзываются; `plan.json` здесь обычный JSON-артефакт, без обещания MR-widget на Free.
 
 Образ закреплён на 1.13.1. `artifacts:access: maintainer` требует GitLab 18.4+; Servercore ставит актуальный пакет. Для более старого GitLab используйте поддерживаемое им ограничение доступа к artifacts. Отсутствие `.terraform.lock.hcl` у встроенного `terraform_data` даёт предупреждение при загрузке artifacts; файлы плана всё равно загружаются.
 
@@ -145,7 +146,7 @@ git commit -m "ci: add OpenTofu state pipeline"
 git push
 ```
 
-На default branch выполните `apply`, затем проверьте **Operate -> Terraform states**: появится `tf-state`. Запустите `destroy` и проверьте обновлённый state. Если план старше суток, повторите plan-job перед apply. При ошибке stale plan создайте новый план.
+На default branch выполните `apply`, затем проверьте **Operate -> Terraform states**: появится `tf-state`. Запустите `destroy` и проверьте обновлённый state. Если план старше суток, повторите plan-job перед apply. Если job прервали и lock завис: **Operate -> Terraform states**, у state меню **Unlock** (нужна роль Maintainer). При ошибке stale plan создайте новый план.
 
 ## Самопроверка
 

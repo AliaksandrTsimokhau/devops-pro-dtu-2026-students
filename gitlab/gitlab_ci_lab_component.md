@@ -22,6 +22,7 @@
 - Базовое знание Python (по сути нужен только `argparse`).
 - Работающее представление о `.gitlab-ci.yml`, stages, jobs, include.
 - Установленный `git` локально.
+- Доступ job'ов к Docker Hub (образ `python:3.11-slim`); если на стенде есть зеркало, подставьте его имя образа.
 - 30–45 минут.
 
 > Перед началом проверьте, что runner доступен проекту: **Settings > CI/CD > Runners**. На стенде это ваш runner с тегами `lab-1` или `lab-2` и `kubernetes` (точные теги смотрите там же; Kubernetes executor без привилегий, образ по умолчанию `alpine:3.22`). Job без `tags:` может зависнуть в `pending`, поэтому в `.gitlab-ci.yml` ниже добавлен блок `default: tags:`; подставьте свои теги или уберите блок, если runner берёт untagged jobs.
@@ -358,7 +359,16 @@ include:
 4. Type: **Variable**, Visibility: **Masked** (значение скрыто в логах; токен `glpat-…` под правила маскирования подходит).
 5. Protected: чекбокс снят, чтобы переменная была доступна на любой ветке (в лабе ветки не защищены).
 
-Поднимите версию компонента (`v1.1.0`), обновите ссылку в потребителе на `@v1.1.0`. После запуска pipeline вы увидите список проектов в логе.
+Поднимите версию компонента:
+
+```bash
+git add templates/template.yml
+git commit -m "feat: GitLab API check"
+git tag v1.1.0
+git push origin main v1.1.0
+```
+
+Обновите ссылку в потребителе на `@v1.1.0` и запушьте. В логе job'а `component` после приветствия появится список `path_with_namespace` ваших проектов.
 
 > **Security note:** в реальном компоненте никогда не выводите PAT в логи; используйте `Masked` + `Protected` для prod-токенов; рассматривайте OIDC federation вместо long-lived PAT (см. GitLab docs → CI/CD → Cloud OIDC).
 

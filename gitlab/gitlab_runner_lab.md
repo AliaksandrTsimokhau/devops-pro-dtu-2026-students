@@ -52,6 +52,8 @@ export RUNNER_TOKEN=glrt-xxxxxxxxxxxxxxxxxxxx   # не коммитьте и н�
 
 ## Шаг 2. Docker executor на локальной машине
 
+> На VM стенда `docker` нет, есть Podman. Можно попробовать `alias docker=podman` (**не проверено** для вашей VM; сокет настраивается по врезке про Podman ниже) или пропустить этот шаг и сделать шаг 5.
+
 Runner сам запускается в контейнере, а job'ы он порождает как соседние контейнеры через сокет.
 
 ```bash
@@ -177,7 +179,7 @@ export RUNNER_TOKEN_K8S=glrt-xxxxxxxxxxxxxxxxxxxx   # не коммитьте т
 
 - gitlab.com: `https://gitlab.com`
 - self-hosted из `gitlab_in_kind.md`: тот же адрес `http://gitlab.<IP>.nip.io`, что и в той лабе, где `<IP>` — IP вашего хоста (не `127.0.0.1`)
-- стенд Servercore: `https://<gitlab-host>`. Если проверка ниже не резолвит имя, добавьте в values runner'а `hostAliases` с приватным IP GitLab (проверьте ключ через `helm show values gitlab/gitlab-runner`) и спросите IP у оператора
+- стенд Servercore: `https://<gitlab-host>`. Если проверка ниже не резолвит имя, нужны два места (спросите приватный IP GitLab у оператора): для manager-пода `hostAliases` в values chart (точный ключ проверьте по `helm show values gitlab/gitlab-runner`), а для job-подов, которые делают git clone, блок `[[runners.kubernetes.host_aliases]]` с `ip = "<приватный IP>"` и `hostnames = ["<gitlab-host>"]` внутри `runners.config` под `[runners.kubernetes]`
 
 Создайте кластер и проверьте доступность GitLab из него:
 
@@ -185,6 +187,8 @@ export RUNNER_TOKEN_K8S=glrt-xxxxxxxxxxxxxxxxxxxx   # не коммитьте т
 kind create cluster --name runner-lab
 kubectl run curl --rm -it --restart=Never --image=curlimages/curl -- curl -sI "$GITLAB_URL"
 ```
+
+**Expect:** первая строка ответа `HTTP/2 200` или `302`. `Could not resolve host` означает, что нужны `host_aliases` (см. выше).
 
 ```bash
 helm repo add gitlab https://charts.gitlab.io/
@@ -284,6 +288,8 @@ kubectl -n gitlab-runner get pods -w
 
 Упражнение: включите **Protected** на `lab-docker`, запустите pipeline из feature-ветки (не protected) — job зависнет. Запустите из `main` — отработает.
 
+**Expect:** job из feature-ветки остаётся `pending`, из `main` проходит; после упражнения снимите **Protected**.
+
 ---
 
 ## Известные проблемы
@@ -292,7 +298,7 @@ kubectl -n gitlab-runner get pods -w
 |---------|---------|---------|
 | Job висит `pending`, «stuck» | нет online runner'а с нужными `tags:` либо runner не берёт untagged | совпадение тегов или включить **Run untagged jobs** |
 | `ERROR: no image specified and no default image configured` | свой `config.toml`/`runners.config` затёр default `image` | задать `image` в `[runners.docker]` / `[runners.kubernetes]` или `image:` в каждом job |
-| `Cannot connect to the Docker daemon` в job с `docker build` | DinD не настроен | runner с `privileged = true` + `services: docker:dind`, либо монтировать сокет (небезопасно); без privileged (стенд Servercore) собирайте образы через buildah/kaniko |
+| `Cannot connect to the Docker daemon` в job с `docker build` | DinD не настроен | runner с `privileged = true` + `services: docker:dind`, либо монтировать сокет (небезопасно); на стенде Servercore попросите оператора включить privileged на вашей VM или собирайте образы через buildah/kaniko (без Docker) |
 | Runner в kind (arm64) висит на `Pulling image` для helper | пытается скачать x86_64 helper | `helper_image = "...gitlab-runner-helper:arm64-<версия>"` в `[runners.kubernetes]` |
 | Runner online в UI, но job не стартует в kind-GitLab | Pod не резолвит `gitlab.<IP>.nip.io` или нет маршрута | проверить `kubectl -n gitlab-runner logs <pod>`; использовать адрес, достижимый из кластера |
 | `403 / invalid token` при `register` | старый registration token в новом flow (или наоборот) | создать runner в UI и использовать `glrt-...` токен |
@@ -300,6 +306,8 @@ kubectl -n gitlab-runner get pods -w
 ---
 
 ## Очистка
+
+Строки с `docker` нужны только если вы делали шаг 2; `kind delete cluster --name runner-lab` нужен только если вы создавали этот кластер (на стенде его нет: кластер VM не удаляйте, вместо этого `helm uninstall` ниже).
 
 ```bash
 docker rm -f gitlab-runner && docker volume rm gitlab-runner-config

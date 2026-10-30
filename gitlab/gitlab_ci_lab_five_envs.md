@@ -2,7 +2,7 @@
 
 Построим parent -> child -> grand-child pipeline с отдельными OpenTofu state для review, integration, QA, staging и production. На Servercore GitLab CE используем Path B: каждое окружение создаёт проект в группе-песочнице. Path A оставляет вариант с AWS.
 
-**Требуется:** GitLab 18.4+, Maintainer в CI-проекте, Owner группы-песочницы для Path B, container executor и пройденная [лаба по state](gitlab_ci_lab_tf.md). На Servercore сначала выполните [подготовку](servercore_gitlab.md). Время: 60-90 минут.
+**Требуется:** GitLab 18.4+, Maintainer в CI-проекте, Owner группы-песочницы для Path B, container executor и пройденная [лаба по state](gitlab_ci_lab_tf.md). На Servercore сначала выполните [подготовку](servercore_gitlab.md). Время: 60-90 минут. Job-ам нужен доступ к `ghcr.io` (образ OpenTofu), к GitLab API и к `registry.opentofu.org` (провайдер `gitlabhq/gitlab`).
 
 | Окружение | Триггер | Plan / apply | State |
 |---|---|---|---|
@@ -53,7 +53,7 @@ terraform {
 - `TF_VAR_gitlab_namespace_id`: ID группы.
 - `TF_VAR_gitlab_base_url`: **URL вашего GitLab с `/api/v4/`**, например `https://gitlab.lab.example.com/api/v4/`. На GitLab.com: `https://gitlab.com/api/v4/`.
 
-Давайте доступ к проекту только участникам лабы: unprotected PAT доступен коду их веток. Удалите его после destroy. Не задавайте CI/CD variables `TF_STATE_NAME`, `TF_VAR_resource_name` и `TF_VAR_environment_label`: их задают pipeline-файлы для каждого окружения.
+Давайте доступ к проекту только участникам лабы: unprotected PAT доступен коду их веток. Удалите его после destroy. Значение PAT попадает в сохранённый план и `plan.json` (artifacts доступны только Maintainer и живут сутки), поэтому не открывайте эти файлы посторонним. Не задавайте CI/CD variables `TF_STATE_NAME`, `TF_VAR_resource_name` и `TF_VAR_environment_label`: их задают pipeline-файлы для каждого окружения.
 
 `terraform/main.tf`:
 
@@ -62,7 +62,7 @@ terraform {
   required_providers {
     gitlab = {
       source  = "gitlabhq/gitlab"
-      version = "~> 17.0"
+      version = "~> 17.0" # проверьте совместимость версии провайдера с версией GitLab стенда
     }
   }
 }
@@ -187,7 +187,7 @@ private_cidr = "10.1.2.0/24"
 
 Для integration, qa, staging, production используйте соответственно `10.2`, `10.3`, `10.4`, `10.5` вместо `10.1` во всех трёх CIDR.
 
-Для обоих Path: выполните `tofu -chdir=terraform init -backend=false` локально, затем `tofu -chdir=terraform fmt` и закоммитьте `.terraform.lock.hcl`. Используйте ту же версию OpenTofu, что в CI.
+Для обоих Path: выполните `tofu -chdir=terraform init -backend=false` локально, затем `tofu -chdir=terraform fmt` и затем `tofu -chdir=terraform providers lock -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_arm64` и закоммитьте `.terraform.lock.hcl`: без этого lock-файл содержит хэши только вашей платформы, и `init` в CI на linux может отказать. Используйте ту же версию OpenTofu, что в CI.
 
 ## Шаг 3. Parent: `.gitlab-ci.yml`
 
@@ -376,7 +376,7 @@ vars/production.tfvars @operations-group
 
 ## Шаг 8. Cleanup
 
-**Сначала destroy, затем отзыв PAT/AWS credentials.** Для каждого active environment нажмите Stop или запустите его `destroy` в соответствующем child pipeline. Включая qa, staging и production: у них теперь есть собственные destroy-jobs.
+**Сначала destroy, затем отзыв PAT/AWS credentials.** Для каждого active environment нажмите Stop или запустите его `destroy` в соответствующем child pipeline. Включая qa, staging и production: у них теперь есть собственные destroy-jobs. Для review, integration и staging `destroy` находится в first-layer child pipeline; для qa и production в их grand-child pipeline (откройте bridge-job `qa` или `production`, затем **Downstream pipeline**).
 
 Проверьте отсутствие demo-проектов Path B или ресурсов AWS Path A. Только затем отзовите PAT/credentials и удалите CI/CD variables. State-файлы можно удалить через **Operate -> Terraform states** после проверки, что ресурсы удалены. Удаление одного state не удаляет инфраструктуру.
 

@@ -41,13 +41,16 @@ cd rules-lab
 mkdir -p src tests
 echo 'print("app")' > src/app.py
 echo 'print("test")' > tests/test_app.py
-echo 'FROM alpine:3.20' > Dockerfile
+echo 'FROM alpine:3.22' > Dockerfile
 ```
 
 Создайте базовый `.gitlab-ci.yml`:
 
 ```yaml
 image: alpine:3.22
+
+# Если job висит в pending, раскомментируйте блок и сохраняйте его во всех следующих версиях файла:
+# default: {tags: [lab-1, kubernetes]}
 
 stages:
   - build
@@ -265,7 +268,7 @@ git push origin main
 2. Source branch: `feature/mr-test`. Target: `main`.
 3. После создания MR — откройте **Pipelines** в MR.
 
-`integration-test` должен появиться (source = `merge_request_event`). Также появится `build` (в ветке изменён `src/`); `deploy` отсутствует (`$CI_COMMIT_BRANCH` в MR-pipeline не задана).
+В списке pipelines будет два: branch pipeline от push (только `build`) и MR pipeline. Дубль уберёт `workflow:rules` в шаге 6. В MR pipeline `integration-test` должен появиться (source = `merge_request_event`). Также появится `build` (в ветке изменён `src/`); `deploy` отсутствует (`$CI_COMMIT_BRANCH` в MR-pipeline не задана).
 
 **Тест C — schedule (опционально):**
 
@@ -275,7 +278,7 @@ git push origin main
 
 `nightly-scan` запустится; `deploy` тоже (расписание идёт на `main`, а `$CI_COMMIT_BRANCH` в нём задана); `integration-test` — нет.
 
-**Все возможные значения `$CI_PIPELINE_SOURCE`:**
+**Основные значения `$CI_PIPELINE_SOURCE`** (полный список — в документации по predefined variables):
 
 | Значение | Когда |
 |---|---|
@@ -325,7 +328,7 @@ git push origin main
 Верните обратно:
 
 ```bash
-echo 'FROM alpine:3.20' > Dockerfile
+echo 'FROM alpine:3.22' > Dockerfile
 git add Dockerfile
 git commit -m "restore Dockerfile"
 git push origin main

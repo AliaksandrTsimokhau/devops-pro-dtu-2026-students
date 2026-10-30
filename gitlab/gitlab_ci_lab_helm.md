@@ -3,6 +3,7 @@
 > **Справочная лаба.** Образ `alpine/helm:3.13.3` — Helm 3, примеры рассчитаны на него; флаги Helm 4 здесь не используются. Для рабочего пайплайна с Helm 4 и деплоем см. [helm_gitlab_cicd_lab.md](../helm/helm_gitlab_cicd_lab.md).
 >
 > **GitLab стенда** работает по HTTPS с доверенным сертификатом, git только по HTTPS. Скрипт использует `$CI_API_V4_URL` (схема и хост уже правильные), поэтому `curl` работает без изменений и флаги `--plain-http` или пропуск проверки TLS не нужны.
+
 GitLab CI/CD пайплайн автоматизирует процесс сборки, тестирования и отправки Helm чарта в GitLab Package Repository. Используя команду `helm lint` на этапе тестирования, вы можете убедиться, что ваш Helm чарт соответствует стандартам качества перед его отправкой в репозиторий
 
 ## Инструкция по созданию GitLab репозитория
@@ -135,11 +136,10 @@ variables:
   HELM_PACKAGE_VERSION: "0.1.0"   # должна совпадать с version: в demo-chart/Chart.yaml
 
 # Образ alpine/helm запускает helm как entrypoint, поэтому для shell-скриптов entrypoint сбрасываем
-image:
-  name: alpine/helm:3.13.3
-  entrypoint: [""]
-
 default:
+  image:
+    name: alpine/helm:3.13.3
+    entrypoint: [""]
   tags: [lab-1, kubernetes]   # свои теги смотрите в Settings > CI/CD > Runners
 
 build:
@@ -167,7 +167,7 @@ deploy:
     - echo "Uploading Helm chart to GitLab Package Repository..."
     - 'curl --fail-with-body --request POST
      --form "chart=@$HELM_PACKAGE_NAME-$HELM_PACKAGE_VERSION.tgz"
-     --user gitlab-ci-token:$CI_JOB_TOKEN
+     --header "JOB-TOKEN: $CI_JOB_TOKEN"
      "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/helm/api/stable/charts"'
 
   dependencies:
@@ -178,20 +178,20 @@ deploy:
 ```
 
 ## Описание:
-`stages`: Определяет этапы пайплайна: build, test, deploy.
-`variables`: Определяет имя пакета Helm и версию. Версия должна совпадать с `version:` в `Chart.yaml`, иначе имя `.tgz` не совпадёт и загрузка упадёт. `--app-version` не передаётся: `appVersion` берётся из `Chart.yaml`.
-`image`: `alpine/helm` с `entrypoint: [""]`, иначе скрипты `script:` не запустятся; `curl` для загрузки ставится в `deploy` через `apk`. `tags`: теги раннера стенда.
-`build`:
-    **stage**: Указывает, что это этап сборки.
-    **script**: Выполняет команду helm package для упаковки Helm чарта.
-    **artifacts**: Сохраняет артефакты сборки (упакованный Helm чарт) для последующих этапов.
-`test`:
-    **stage**: Указывает, что это этап тестирования.
-    **script**: Выполняет команду helm lint для проверки Helm чарта.
-`deploy`:
-    **stage**: Указывает, что это этап развертывания.
-    **script**: Выполняет команду curl для загрузки упакованного Helm чарта в GitLab Package Repository.
-    **rules**: Указывает, что этот этап выполняется только на ветке main.
+- `stages`: Определяет этапы пайплайна: build, test, deploy.
+- `variables`: Определяет имя пакета Helm и версию. Версия должна совпадать с `version:` в `Chart.yaml`, иначе имя `.tgz` не совпадёт и загрузка упадёт. `--app-version` не передаётся: `appVersion` берётся из `Chart.yaml`.
+- `default:image`: `alpine/helm` с `entrypoint: [""]`, иначе скрипты `script:` не запустятся; `curl` для загрузки ставится в `deploy` через `apk`. `default:tags`: теги раннера стенда.
+- `build`:
+  - **stage**: Указывает, что это этап сборки.
+  - **script**: Выполняет команду helm package для упаковки Helm чарта.
+  - **artifacts**: Сохраняет артефакты сборки (упакованный Helm чарт) для последующих этапов.
+- `test`:
+  - **stage**: Указывает, что это этап тестирования.
+  - **script**: Выполняет команду helm lint для проверки Helm чарта.
+- `deploy`:
+  - **stage**: Указывает, что это этап развертывания.
+  - **script**: Выполняет команду curl для загрузки упакованного Helm чарта в GitLab Package Repository.
+  - **rules**: Указывает, что этот этап выполняется только на ветке main.
 
 Закоммитьте и отправьте файл .gitlab-ci.yml в репозиторий:
 ```bash
@@ -304,6 +304,7 @@ deploy-k8s:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
+      allow_failure: true   # без этого ручной job блокирует pipeline в статусе blocked
 ```
 
 4. Закоммитьте и запушьте, затем нажмите кнопку запуска в UI:

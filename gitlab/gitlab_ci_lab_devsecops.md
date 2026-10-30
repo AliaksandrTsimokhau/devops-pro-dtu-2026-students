@@ -3,7 +3,7 @@
 **Duration:** 45–60 min  
 **Difficulty:** ★★★☆☆
 
-Собираем shift-left пайплайн, который ловит четыре класса проблем ещё до деплоя: секреты в коде, небезопасный код (SAST), уязвимые зависимости и ошибки в Dockerfile. Всё работает на **GitLab Free** и на self-hosted CE в kind — без платных security-шаблонов.
+Собираем shift-left пайплайн, который ловит четыре класса проблем ещё до деплоя: секреты в коде, небезопасный код (SAST), уязвимые зависимости и ошибки в Dockerfile. Всё работает на **GitLab Free** и на self-hosted GitLab CE — без платных security-шаблонов.
 
 **What you learn:**
 - `gitleaks` — поиск секретов в коде и в git-истории
@@ -87,11 +87,13 @@ EOF
 git add . && git commit -m "add vulnerable sample app" && git push origin main
 ```
 
+> Если на вашем GitLab включена Secret Push Protection (Ultimate или gitlab.com), push с токеном `glpat-…` может быть отклонён даже для фейкового значения. На стенде (CE) этой защиты нет. Как обойти отказ именно в вашей версии, смотрите в документации GitLab (раздел Secret push protection); не используйте для этого настоящий токен.
+
 ---
 
 ## Step 2: Scanner jobs
 
-Три образа заданы переменными в одном блоке `variables:` в начале файла. Для Trivy тег уже закреплён (`0.76.1`, проверен на стенде). Для gitleaks и semgrep тег нужно выбрать самим: пока вы не замените `ЗАМЕНИТЕ_НА_ТЕГ` на реальный тег, соответствующий job упадёт с `invalid reference format` — это ожидаемо. Если переменная образа вообще не задана, job тихо запустится в `alpine:3.22` (образ раннера по умолчанию) и упадёт с `<tool>: not found`.
+Три образа заданы переменными в одном блоке `variables:` в начале файла. Для Trivy тег уже закреплён (`0.76.1`, проверен на стенде). Для gitleaks и semgrep тег нужно выбрать самим: пока вы не замените `vX.Y.Z` и `X.Y.Z` на реальные теги (см. ниже, как их найти), соответствующий job упадёт при загрузке образа (тега не существует) — это ожидаемо. Если переменная образа вообще не задана, job тихо запустится в `alpine:3.22` (образ раннера по умолчанию) и упадёт с `<tool>: not found`.
 
 **Как выбрать тег:**
 
@@ -108,8 +110,8 @@ git add . && git commit -m "add vulnerable sample app" && git push origin main
 stages: [test, gate]
 
 variables:
-  GITLEAKS_IMAGE: zricethezav/gitleaks:ЗАМЕНИТЕ_НА_ТЕГ
-  SEMGREP_IMAGE: semgrep/semgrep:ЗАМЕНИТЕ_НА_ТЕГ
+  GITLEAKS_IMAGE: zricethezav/gitleaks:vX.Y.Z
+  SEMGREP_IMAGE: semgrep/semgrep:X.Y.Z
   TRIVY_IMAGE: aquasec/trivy:0.76.1
   TRIVY_NO_PROGRESS: "true"
   TRIVY_CACHE_DIR: ".trivycache/"
@@ -181,6 +183,8 @@ trivy-config:
 - **`GIT_DEPTH: 0`** — по умолчанию GitLab делает shallow clone; секрет, удалённый в прошлом коммите, останется незамеченным.
 - **`rules: allow_failure:`** — один и тот же job жёлтый на feature-ветке и красный на `main`.
 - **`semgrep --error`** — без флага semgrep возвращает 0 даже с findings.
+- **`gitleaks detect`** — в новых релизах 8.x команду заменяют `gitleaks git` (и `gitleaks dir` для файлов). Синтаксис зависит от выбранного тега: сверьтесь с `gitleaks --help` своей версии и при необходимости замените команду.
+- **Метрики semgrep** — с правилами из registry semgrep может отправлять метрики; для офлайна используйте локальные правила и `--metrics=off` (проверьте по `semgrep --help` своей версии).
 - **Правила semgrep** — `p/python` и `p/secrets` загружаются с registry. Какие именно rule IDs сработают на `main.py`, зависит от версии набора правил: сверьтесь с выводом job-а и запишите ID. Если registry требует логин, используйте локальные правила (`--config ./rules`).
 
 ```bash
@@ -269,8 +273,9 @@ git switch -c fix/security-findings
    ```python
    subprocess.check_output(["ping", "-c1", host])
    yaml.safe_load(request.data)
-   app.run(host="0.0.0.0", debug=False)
+   app.run(host=os.environ.get("HOST", "127.0.0.1"), debug=False)
    ```
+   Привязка к `0.0.0.0` может снова сработать как finding semgrep (правило про `app.run` зависит от версии набора правил, проверьте вывод job-а). Поэтому адрес берём из окружения; в контейнере задайте `HOST=0.0.0.0` через `ENV` или параметры запуска.
 3. **Зависимости.** Обновите версии в `requirements.txt` до актуальных (`pip index versions flask`) и перезапустите `trivy fs`. Job `trivy-fs` блокирует по порогу **HIGH и CRITICAL**, а gate считает только CRITICAL, поэтому проверяйте, что зелёный именно `trivy-fs`.
 4. **Dockerfile.**
    ```dockerfile

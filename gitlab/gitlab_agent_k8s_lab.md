@@ -35,10 +35,9 @@
 | GitLab | KAS |
 |--------|-----|
 | **gitlab.com** | Работает из коробки, адрес показывает UI на шаге регистрации (**проверь:** `wss://kas.gitlab.com`) |
-| **Servercore / Linux package** | KAS включён по умолчанию; используйте URL из UI и [Servercore hostAliases](servercore_gitlab.md#деплой-в-kind). Шаги 0.1-0.2 про установку GitLab Helm chart пропустите, начните с Шага 1. |
+| **Стенд Servercore** (GitLab CE 19.x, Linux package, HTTPS) | KAS уже включён; адрес KAS: `wss://<gitlab-host>/-/kubernetes-agent/` (сверьте с UI). Шаги 0.1-0.2 про установку GitLab Helm chart пропустите, начните с Шага 1. Если имя не резолвится в Pod, см. [Servercore hostAliases](servercore_gitlab.md#деплой-в-kind). |
 | **Self-hosted (Helm chart)** | Нужно `global.kas.enabled: true` |
 | **Self-hosted в kind из [gitlab_in_kind.md](gitlab_in_kind.md)** | В values стоит `global.kas.enabled: false` — **включите**, иначе регистрация агента не завершится |
-| **Стенд Servercore** (GitLab CE 19.x, Linux package, HTTPS) | KAS уже включён. **Шаги 0.1 и 0.2 пропустите.** Адрес KAS: `wss://<gitlab-host>/-/kubernetes-agent/` |
 
 **Стенд Servercore: проверка KAS.** С вашей VM:
 
@@ -155,6 +154,7 @@ unset AGENT_TOKEN
 
 export KAS_ADDRESS=<адрес-из-UI>   # Servercore: wss://<gitlab-host>/-/kubernetes-agent/; kind без TLS: ws://kas.192.168.3.35.nip.io
 
+# Servercore, если имя GitLab не резолвится в Pod агента: добавьте строку "-f servercore-agent-values.yaml \" (см. servercore_gitlab.md)
 helm upgrade --install dtu-agent gitlab/gitlab-agent \
   --version "$AGENT_CHART_VERSION" \
   --namespace dtu-agent --create-namespace \
@@ -170,10 +170,10 @@ rm -f /tmp/agent-token
 
 ```sh
 kubectl -n dtu-agent get pods
-# dtu-agent-gitlab-agent-...   1/1   Running
+# dtu-agent-gitlab-agent-v2-...   1/1   Running   (точное имя: kubectl -n dtu-agent get deploy)
 ```
 
-**Expect:** Pod `1/1 Running`, а в **Operate → Kubernetes clusters** статус агента `dtu-agent` сменился на **Connected**. Если нет — смотрите логи: `kubectl -n dtu-agent logs deploy/dtu-agent-gitlab-agent`.
+**Expect:** Pod `1/1 Running`, а в **Operate → Kubernetes clusters** статус агента `dtu-agent` сменился на **Connected**. Если нет — смотрите логи: `kubectl -n dtu-agent logs deploy/dtu-agent-gitlab-agent-v2`.
 
 > **Права агента.** Chart по умолчанию создаёт ClusterRoleBinding на `cluster-admin`: любой pipeline проекта из `ci_access` получает полный доступ к кластеру. Для этой лабы допустимо. Лаба [полного цикла](gitlab_ci_lab_full_cycle.md) требует **отдельного** агента с ограниченным ServiceAccount (RBAC в одном namespace и lease-права в namespace агента); этого агента там не переиспользуйте. Здесь агент стоит в namespace `dtu-agent`, чтобы не пересекаться с `gitlab-agent` из full-cycle.
 
@@ -212,7 +212,7 @@ script:
 
 ## Шаг 4. Pipeline: деплой через агента
 
-Берём pipeline из [helm_gitlab_cicd_lab.md](../helm/helm_gitlab_cicd_lab.md) (стадии `lint → validate → package → publish`) **без изменений** и заменяем только блок `deploy`. **Не копируйте** deploy-джобу из той лабы: она читает `KUBE_CONFIG`, а здесь доступ идёт через агента.
+Берём pipeline из [helm_gitlab_cicd_lab.md](../helm/helm_gitlab_cicd_lab.md) (стадии `lint → validate → package → publish`) **без изменений** и заменяем только блок `deploy`. Переменные `CHART_DIR` и `CHART_REGISTRY` уже заданы в `variables:` pipeline из Helm-лабы; `IMAGE_TAG` необязательна (используется только в Шаге 5). **Не копируйте** deploy-джобу из той лабы: она читает `KUBE_CONFIG`, а здесь доступ идёт через агента.
 
 Образ Helm — `alpine/helm:4.2.0` (Helm 4): флаг `--rollback-on-failure` есть в Helm 4. Тег вынесен в переменную `HELM_IMAGE_TAG`. Проверка версии образа:
 

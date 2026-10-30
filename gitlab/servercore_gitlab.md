@@ -9,7 +9,7 @@
 - Номер VM (`lab-1` или `lab-2`) и команду SSH.
 - Online group runner этой VM: executor `kubernetes`, tags `lab-1,kubernetes` (для второй VM - `lab-2,kubernetes`), **Run untagged jobs: enabled**. Точные теги проверьте в **Settings > CI/CD > Runners**, не угадывайте.
 
-Runner берёт только проекты вашей группы. Обычные примеры без `tags:` работают без правок. Для проверки конкретного runner добавьте `tags: [lab-1]`. В runner-лабе теги `lab-docker` и `lab-k8s` относятся к runner'ам, которые вы создаёте сами; встроенному runner их не добавляйте.
+Runner берёт только проекты вашей группы. Обычные примеры без `tags:` работают без правок. Для проверки конкретного runner добавьте `tags: [lab-1, kubernetes]` (для второй VM - `[lab-2, kubernetes]`). В runner-лабе теги `lab-docker` и `lab-k8s` относятся к runner'ам, которые вы создаёте сами; встроенному runner их не добавляйте.
 
 Оператор сначала запускает `make configure` без runner-токенов, создаёт group runners в UI, затем добавляет `GITLAB_RUNNER_TOKEN_LAB_01` / `GITLAB_RUNNER_TOKEN_LAB_02` в `.env` и повторяет `make configure`. Не передавайте эти токены студентам и не записывайте их в учебные проекты.
 
@@ -89,6 +89,8 @@ Container jobs не получают прежний `/home/gitlab-runner/.kube/c
 
 Если имя GitLab не резолвится внутри Pod агента, создайте файл `servercore-agent-values.yaml` с содержимым ниже и добавьте `-f servercore-agent-values.yaml` к команде `helm upgrade --install` при установке agentk (в Agent lab - Шаг 2; в full-cycle - вместе с `--values ci/agent-values.yaml`). Если имя резолвится, файл не нужен. Файл направляет соединение в приватную сеть:
 
+Ключ `hostAliases` соответствует чарту `gitlab-agent`; точное имя проверьте по `helm show values gitlab/gitlab-agent`.
+
 ```yaml
 hostAliases:
   - ip: "10.42.0.10"  # приватный IP GitLab, спросите у оператора
@@ -99,10 +101,10 @@ hostAliases:
 
 ## Какие лабы проходить
 
-1. Walkthrough, Runner, Rules, Helm, Monorepo, Components.
-2. [OpenTofu state](gitlab_ci_lab_tf.md) и [пять окружений](gitlab_ci_lab_five_envs.md), Path B. Лаба пяти окружений требует доработки: шаблон `Terraform.gitlab-ci.yml` больше не опубликован, поэтому как обязательную лабу стенда её не берите, пока замена не проверена. Если запускаете: задайте `TF_VAR_gitlab_base_url=https://<gitlab-host>/api/v4/`, песочницу создавайте подгруппой своей группы, и учтите, что стенд на CE: CODEOWNERS-одобрения, protected environments и вкладка Security недоступны (используйте бесплатные варианты из лабы).
-3. Trivy после включения privilege; DevSecOps scanners работают в обычных container jobs.
-4. GitLab Agent для деплоя в свой kind. Агент по умолчанию получает права cluster-admin: используйте его только для этой лабы; для полного цикла ставится отдельный агент с ограниченным ServiceAccount.
+1. [Walkthrough](gitlab_ci_lab_walkthrough.md), [Runner](gitlab_runner_lab.md), [Rules](gitlab_ci_lab_rules.md), [Helm](gitlab_ci_lab_helm.md), [Monorepo](gitlab_ci_lab_monorepo.md), [Components](gitlab_ci_lab_component.md).
+2. [OpenTofu state](gitlab_ci_lab_tf.md), затем [пять окружений](gitlab_ci_lab_five_envs.md) (Path B). Обе лабы используют общий файл `.gitlab-ci/opentofu.yml` (OpenTofu 1.13.1, образ с `ghcr.io`), внешние шаблоны не нужны. Из job нужен доступ к `ghcr.io`, к GitLab API и к registry провайдеров OpenTofu. Для Path B создайте песочницу подгруппой своей группы (вы станете её Owner), создайте PAT со scope `api` и задайте в CI/CD variables проекта `TF_VAR_gitlab_token`, `TF_VAR_gitlab_namespace_id` и `TF_VAR_gitlab_base_url=https://<gitlab-host>/api/v4/`. Стенд на CE: CODEOWNERS-одобрения, protected environments и вкладка Security недоступны (используйте бесплатные варианты из лабы). После лабы сначала destroy всех окружений, затем отзыв PAT.
+3. Trivy после включения privileged; DevSecOps scanners работают в обычных container jobs.
+4. GitLab Agent для деплоя в свой kind (нужен чарт из [Helm-лабы](../helm/helm_gitlab_cicd_lab.md)). Агент по умолчанию получает права cluster-admin: используйте его только для этой лабы; для полного цикла ставится отдельный агент с ограниченным ServiceAccount.
 5. [Полный CI/CD цикл](gitlab_ci_lab_full_cycle.md): web app, image и Helm OCI в GitLab Registry, деплой в kind и четыре практических break/fix упражнения.
 
 [Cosign keyless](gitlab_ci_lab_cosign.md) с публичным Sigstore выполняйте на GitLab.com. HTTPS и OIDC на Servercore не добавляют его issuer в доверенные публичного Fulcio. Вариант для self-managed требует собственного Sigstore; он не входит в этот стенд.

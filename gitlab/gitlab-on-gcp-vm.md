@@ -2,7 +2,7 @@
 
 > **Optional alternative.** The Servercore stand already gives you GitLab CE with trusted Let's Encrypt HTTPS, a registry on port 5050, an unprivileged Kubernetes runner and a kind cluster on your VM. You do **not** need this lab for the other labs. Do it only if you want your own GitLab on GCP.
 >
-> **Cost warning.** The VM (`e2-standard-4`, about 0.15 USD/hour) and its 50 GB SSD bill until you delete them. Do the **Cleanup** part at the end. Use `<PROJECT>`, `<NETWORK>`, `<SUBNET>`, `<ZONE>`, `<REGION>`, `<GITLAB_HOST>` as placeholders for your own values. This lab installs its own runner in the namespace `gitlab-runner-gcp` (release `gcp-runner`) so it does not touch the stand runner in `gitlab-runner`.
+> **Cost warning.** The VM (`e2-standard-4`, about 0.15 USD/hour) and its 50 GB SSD bill until you delete them. Do the **Cleanup** part at the end. Use `<PROJECT>`, `<NETWORK>`, `<SUBNET>`, `<ZONE>`, `<REGION>`, `<GITLAB_HOST>` as placeholders for your own values. This lab installs its own runner in the namespace `gitlab-runner-gcp` (release `gcp-runner`) so it does not touch the stand runner in `gitlab-ci`.
 
 ## What you will build
 
@@ -133,7 +133,7 @@ Open `http://<GITLAB_HOST>`, log in as `root`, and **change the root password** 
 
 Admin Area → Settings → General → **Sign-up restrictions** → uncheck **Sign-up enabled** → Save.
 
-Or via API (useful for scripted setup):
+Or via API (useful for scripted setup). Run this only after you have created `$GL_TOKEN` in 2.3. **Why:** until HTTPS is on (Part 6) the token travels over plain HTTP and can be sniffed, so prefer the UI for this step.
 
 ```bash
 curl -X PUT "http://<EXTERNAL_IP>/api/v4/application/settings" \
@@ -228,7 +228,7 @@ helm repo update gitlab
 kubectl create namespace gitlab-runner-gcp
 ```
 
-This is a separate namespace on purpose: the stand runner of your VM lives in `gitlab-runner`, and this lab must not overwrite or delete it.
+This is a separate namespace on purpose: the stand runner of your VM lives in `gitlab-ci`, and this lab must not overwrite or delete it.
 
 ### 4.3 Write Helm values
 
@@ -387,7 +387,7 @@ gcloud compute firewall-rules delete gitlab-server-allow --project=<PROJECT>
 gcloud compute addresses delete gitlab-ip --project=<PROJECT> --region=<REGION>
 ```
 
-Also: delete the DNS A record for `<GITLAB_HOST>`, and revoke the admin token (**User settings > Access tokens > Revoke**; it expires in 2 days anyway). **Expect:** `gcloud compute instances list --project=<PROJECT>` and `gcloud compute disks list --project=<PROJECT>` show no `demo-test`. Do not delete the `gitlab-runner` namespace: it belongs to the stand runner.
+Also: delete the DNS A record for `<GITLAB_HOST>`, and revoke the admin token (**User settings > Access tokens > Revoke**; it expires in 2 days anyway). **Expect:** `gcloud compute instances list --project=<PROJECT>` and `gcloud compute disks list --project=<PROJECT>` show no `demo-test`. Do not delete the `gitlab-ci` namespace: it belongs to the stand runner.
 
 ---
 

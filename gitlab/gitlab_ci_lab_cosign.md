@@ -86,11 +86,11 @@
 Клонируем и создаём простое приложение:
 
 ```bash
-git clone https://<gitlab-host>/<your-namespace>/cosign-signed-images-lab.git
+git clone https://gitlab.com/<your-namespace>/cosign-signed-images-lab.git
 cd cosign-signed-images-lab
 ```
 
-> Git работает только по HTTPS (SSH закрыт). Вместо пароля используйте personal access token (Edit profile > Access tokens, scope `write_repository`).
+> (на стенде) Git работает только по HTTPS (SSH закрыт). Вместо пароля используйте personal access token (Edit profile > Access tokens, scope `write_repository`). На gitlab.com можно использовать и SSH.
 
 **`Dockerfile`:**
 
@@ -133,13 +133,15 @@ stages:
 build_and_sign:
   stage: build
   image: docker:27
-  tags: [lab-1, kubernetes]   # свои теги смотрите в Settings > CI/CD > Runners
+  # на gitlab.com теги не нужны (shared runners)
   services:
     - name: docker:27-dind
+      alias: docker
       entrypoint: ["env", "-u", "DOCKER_HOST"]
-      command: ["dockerd-entrypoint.sh"]
+      command: ["dockerd-entrypoint.sh", "--mtu=1450"]
   variables:
     DOCKER_HOST: tcp://docker:2375/
+    DOCKER_DRIVER: overlay2
     DOCKER_TLS_CERTDIR: ""
     IMAGE_TAG: $CI_COMMIT_SHORT_SHA
     IMAGE_URI: $CI_REGISTRY_IMAGE:$IMAGE_TAG
@@ -149,6 +151,8 @@ build_and_sign:
     SIGSTORE_ID_TOKEN:
       aud: sigstore
   before_script:
+    - 'for attempt in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done'
+    # версию cosign закрепите (apk add cosign=<версия>), точную возьмите из `apk policy cosign`
     - apk add --no-cache cosign jq
     - echo "$CI_JOB_TOKEN" | docker login -u "gitlab-ci-token" --password-stdin "$CI_REGISTRY"
   script:
@@ -287,7 +291,7 @@ cosign verify \
   registry.gitlab.com/.../cosign-signed-images-lab:<sha>
 ```
 
-→ Ошибка: `no matching signatures: certificate issuer does not match`.
+→ Ошибка вида `no matching signatures` (issuer сертификата не совпал с ожидаемым). Точный текст зависит от версии cosign: проверьте вывод своей версии.
 
 ### Случай 2 — verify с неправильной веткой
 
@@ -298,7 +302,7 @@ cosign verify \
   registry.gitlab.com/.../cosign-signed-images-lab:<sha>
 ```
 
-→ Ошибка: identity mismatch.
+→ Ошибка вида `no matching signatures` (identity не совпала). Точный текст зависит от версии cosign: проверьте вывод своей версии.
 
 ### Случай 3 — verify несуществующего образа
 
@@ -346,14 +350,16 @@ cosign verify \
 attach_sbom:
   stage: build
   image: docker:27
-  tags: [lab-1, kubernetes]   # свои теги смотрите в Settings > CI/CD > Runners
+  # на gitlab.com теги не нужны (shared runners)
   services:
     - name: docker:27-dind
+      alias: docker
       entrypoint: ["env", "-u", "DOCKER_HOST"]
-      command: ["dockerd-entrypoint.sh"]
+      command: ["dockerd-entrypoint.sh", "--mtu=1450"]
   needs: ["build_and_sign"]
   variables:
     DOCKER_HOST: tcp://docker:2375/
+    DOCKER_DRIVER: overlay2
     DOCKER_TLS_CERTDIR: ""
     IMAGE_TAG: $CI_COMMIT_SHORT_SHA
     IMAGE_URI: $CI_REGISTRY_IMAGE:$IMAGE_TAG
@@ -362,6 +368,8 @@ attach_sbom:
     SIGSTORE_ID_TOKEN:
       aud: sigstore
   before_script:
+    - 'for attempt in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done'
+    # версии cosign и syft закрепите (apk add cosign=<версия>), версии смотрите в `apk policy cosign syft`
     - apk add --no-cache cosign syft jq
     - echo "$CI_JOB_TOKEN" | docker login -u "gitlab-ci-token" --password-stdin "$CI_REGISTRY"
   script:

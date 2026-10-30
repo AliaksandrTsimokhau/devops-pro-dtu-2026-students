@@ -22,6 +22,7 @@
 - Аккаунт на GitLab стенда.
 - Установленный `git` локально.
 - Runner в проекте. На стенде это ваш runner с тегами `lab-1` или `lab-2` и `kubernetes` (точные теги проверьте в **Settings > CI/CD > Runners**; Kubernetes executor без привилегий, Docker daemon в jobs нет). Если job висит в `pending`, добавьте в начало `.gitlab-ci.yml` блок `default:` с `tags: [lab-1, kubernetes]` (подставьте свои теги) или включите **Run untagged jobs** у runner'а.
+- Runner должен выполнять минимум 2 job'а одновременно (`concurrent ≥ 2`), иначе параллельность в шагах 2, 5 и 6 не будет видна.
 - 30–45 минут.
 
 ---
@@ -48,6 +49,9 @@ cd gitlab-ci-walkthrough
 Создайте `.gitlab-ci.yml`:
 
 ```yaml
+# Если job висит в pending, раскомментируйте блок и сохраняйте его во всех следующих версиях файла:
+# default: {tags: [lab-1, kubernetes]}
+
 test:
   before_script:
     - echo "Hello " | tr -d "\n" > file1.txt
@@ -100,12 +104,12 @@ git push origin main
 ```
 
 **Что происходит:**
-- Оба job'а выполняются **параллельно** (нет stages → нет барьера).
+- Оба job'а попадают в стадию по умолчанию `test` и выполняются **параллельно** (при `concurrent ≥ 2` у runner'а).
 - `package` сохраняет `packaged.gz` в GitLab storage.
 
 **Проверьте:** на странице job'а `package` появится кнопка **Download artifacts**. Нажмите — скачается `packaged.gz`.
 
-> **Проблема:** каждый job запускается в чистом контейнере и не видит файлов соседа, поэтому `before_script` приходится дублировать в обоих jobs (`package` без него упадёт). Это мотивация для шага 4.
+> **Проблема:** каждый job запускается в чистом контейнере и не видит файлов соседа, поэтому `before_script` приходится дублировать в обоих jobs (без него `package` не найдёт файлы: упадёт сам `cat`, а если runner не включает `pipefail`, получится пустой архив). Это мотивация для шага 4.
 
 ---
 
@@ -194,7 +198,7 @@ git push origin main
 - `test` и `package` автоматически получают `compiled.txt` из предыдущего stage — не нужно ничего настраивать.
 - `image: alpine:3.22` — лёгкий образ; на стенде он и так используется по умолчанию, но явное указание делает конфиг независимым от настроек runner'а.
 
-**Проверьте:** на странице job'а `test` в секции **Job artifacts** видно, что был скачан артефакт из `compile`.
+**Проверьте:** в логе job'а `test` в начале есть блок `Downloading artifacts for compile`.
 
 ---
 
@@ -236,7 +240,7 @@ pack-iso:
   stage: package
   before_script:
     - apk update && apk add xorriso
-  script: mkisofs -o ./packaged.iso ./compiled.txt
+  script: xorrisofs -o ./packaged.iso ./compiled.txt
   artifacts:
     paths:
       - packaged.iso
@@ -248,7 +252,7 @@ git commit -m "step 5: parallel pack-gz and pack-iso jobs"
 git push origin main
 ```
 
-> Если в job `pack-iso` не найден `mkisofs`, замените команду на `xorrisofs -o ./packaged.iso ./compiled.txt` (какая из команд есть, зависит от пакета `xorriso`). `apk add` требует доступа job'а к зеркалам Alpine.
+> Если команда `xorrisofs` не найдена, проверьте `apk info -L xorriso` (там список файлов пакета) и подставьте доступное имя. `apk add` требует доступа job'а к зеркалам Alpine.
 
 **Что изменилось:** в stage `package` теперь два job'а. В UI они запускаются одновременно. Общее время stage = max(pack-gz, pack-iso), а не сумма.
 
@@ -299,7 +303,7 @@ pack-iso:
   stage: package
   before_script:
     - apk update && apk add xorriso
-  script: mkisofs -o ./packaged.iso ./compiled.txt
+  script: xorrisofs -o ./packaged.iso ./compiled.txt
   needs: [compile, test]
   artifacts:
     paths:
@@ -314,7 +318,7 @@ git push origin main
 
 **Что изменилось:** `needs` создаёт явную зависимость. `pack-gz` и `pack-iso` больше не ждут весь stage `test` (в том числе медленный `e2e`) — стартуют, как только завершились `compile` и `test`.
 
-**Проверьте:** `pack-gz` и `pack-iso` стартуют, пока `e2e` ещё выполняется (на шаге 5 они бы ждали его). В UI pipeline включите **Show dependencies** — увидите DAG с рёбрами между jobs.
+**Проверьте:** `pack-gz` и `pack-iso` стартуют, пока `e2e` ещё выполняется (на шаге 5 они бы ждали его). В графе pipeline переключитесь на вид **Job dependencies** (в части версий — переключатель **Show dependencies**) — увидите DAG с рёбрами между jobs.
 
 ---
 
@@ -351,7 +355,7 @@ git push origin main
 - [ ] Шаг 3 — pipeline UI показывает два stage; `package` стартует только после `test`.
 - [ ] Шаг 4 — `compile` job создаёт `compiled.txt`; `test` и `package` используют его без дублирования команд.
 - [ ] Шаг 5 — `pack-gz` и `pack-iso` выполняются параллельно в UI.
-- [ ] Шаг 6 — pipeline показывает DAG-граф через **Show dependencies**.
+- [ ] Шаг 6 — pipeline показывает DAG-граф через вид **Job dependencies** (**Show dependencies**).
 - [ ] Шаг 7 — намеренно сломанный `test` блокирует `pack-*` jobs.
 - [ ] Понимаете разницу: stages = барьер синхронизации; needs = явная DAG-зависимость.
 

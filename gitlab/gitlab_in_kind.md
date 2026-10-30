@@ -82,6 +82,8 @@ kind create cluster --name kind-dtu \
 kubectl cluster-info --context kind-kind-dtu
 ```
 
+**Expect:** `Kubernetes control plane is running at https://127.0.0.1:...`.
+
 ---
 
 ## Шаг 4. Находим IP хоста
@@ -275,6 +277,8 @@ kubectl -n gitlab get secret gitlab-gitlab-initial-root-password \
 ```
 
 Логин: `root` / `<пароль из команды выше>`
+
+**Expect:** открывается страница входа GitLab, после логина виден список проектов.
 
 > Эта установка работает по HTTP без TLS. Container Registry и OCI push из CI (build/push-лабы, full-cycle) на ней не заработают без доверенного HTTPS: для них используйте стенд Servercore или gitlab.com.
 

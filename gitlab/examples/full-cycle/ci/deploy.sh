@@ -6,7 +6,7 @@ set -eu
 : "${CI_REGISTRY:?}" "${CI_REGISTRY_IMAGE:?}" "${CI_REGISTRY_USER:?}" "${CI_REGISTRY_PASSWORD:?}"
 : "${CHART_VERSION:?Missing publish-chart artifact}" "${CI_COMMIT_SHA:?}"
 case "$KUBE_NAMESPACE" in default|'') echo 'A dedicated namespace is required' >&2; exit 1 ;; esac
-case "$APP_HOST" in *[!a-zA-Z0-9.-]*) echo 'APP_HOST must be a hostname without scheme or port' >&2; exit 1 ;; esac
+case "$APP_HOST" in *[!a-z0-9.-]*) echo 'APP_HOST must be a lowercase hostname without scheme or port' >&2; exit 1 ;; esac
 
 mkdir -p diagnostics
 umask 077
@@ -36,6 +36,7 @@ printf '%s' "$REGISTRY_PULL_PASSWORD" > "$private/password"
 echo "$CI_REGISTRY_PASSWORD" | helm registry login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
 # Helm's JSON contains one numeric release version; chart versions are strings.
 revision=$(helm status "$RELEASE" --namespace "$KUBE_NAMESPACE" --kube-context "$KUBE_CONTEXT" --output json 2>/dev/null | sed -n 's/.*"version":[[:space:]]*\([0-9][0-9]*\).*/\1/p' || true)
+# Note: this is the latest revision, whatever its state. If an earlier release is stuck in failed/pending-*, fix it by hand first.
 [ -z "$revision" ] || previous=$revision
 helm upgrade --install "$RELEASE" "oci://${CI_REGISTRY_IMAGE}/charts/release-board" \
   --version "$CHART_VERSION" --namespace "$KUBE_NAMESPACE" \

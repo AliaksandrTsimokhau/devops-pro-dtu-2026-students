@@ -30,7 +30,7 @@ Start Minikube:
 minikube start --driver=docker --cpus 4 --memory 10240
 ```
 
-> With the Docker driver on macOS the minikube IP is usually not reachable from the host, so `https://gitlab.<minikube-ip>.nip.io` may not open. In that case use `minikube tunnel`, or the VirtualBox/other VM driver on Intel. **Verify** on your machine with `curl -k https://gitlab.$(minikube ip).nip.io` after the install. The values below assume the default VirtualBox IP `192.168.99.100` unless you override it.
+> With the Docker driver on macOS the minikube IP is usually not reachable from the host, so `https://gitlab.<minikube-ip>.nip.io` may not open. In that case use `minikube tunnel`, or the VirtualBox/other VM driver on Intel. **Verify** on your machine with `curl -k https://gitlab.$(minikube ip).nip.io` after the install (`-k` skips certificate checks: use it only as a reachability probe against your own self-signed GitLab and never send tokens or passwords with it). The values below assume the default VirtualBox IP `192.168.99.100` unless you override it.
 
 Get the cluster IP:
 ```sh
@@ -127,6 +127,8 @@ To get the initial root password:
 kubectl get secret <release-name>-gitlab-initial-root-password -ojsonpath='{.data.password}' | base64 --decode ; echo
 ```
 Replace `<release-name>` with your Helm release name (default: `gitlab`).
+
+**Expect:** the page opens (accept the self-signed certificate warning) and you can log in as `root` with the printed password.
 
 ---
 
@@ -239,6 +241,6 @@ This will generate an authentication token (`glrt-...`, показывается
     helm uninstall gitlab
     minikube delete
     ```
-    Also revoke the runner in GitLab (project **Settings > CI/CD > Runners**) and delete the `runnerToken` file `values.yaml` from disk. `minikube delete` removes the cluster, its volumes and the 10 GB VM or container.
+    Also revoke the runner in GitLab (project **Settings > CI/CD > Runners**) and delete `values.yaml` from disk (it contains the `runnerToken`). `minikube delete` removes the cluster, its volumes and the 10 GB VM or container.
 
 Refer to the [GitLab Runner Helm Chart documentation](https://docs.gitlab.com/runner/install/kubernetes.html) for advanced configuration and troubleshooting.

@@ -2,6 +2,8 @@
 
 On Servercore, complete [stand onboarding](servercore_gitlab.md) and ask the operator to enable privileged jobs on your VM before the image-scan exercise. Repository scanning needs no privilege.
 
+> Without privileged jobs you can still scan an image: build it unprivileged with buildah, export it with skopeo and scan the archive with `trivy image --input <file>.tar` (the buildah + skopeo pattern is in [gitlab_ci_lab_full_cycle.md](gitlab_ci_lab_full_cycle.md)).
+
 This tutorial guides you through configuring container scanning in your pipeline:
 
 1. [Create a new project](#create-a-new-project)
@@ -90,7 +92,10 @@ trivy:
     - 'for attempt in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done'
     - docker info
     - echo "Trivy $TRIVY_VERSION"
-    - wget --no-verbose https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz -O - | tar -zxvf -
+    - wget --no-verbose https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz
+    - wget --no-verbose https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt
+    - grep " trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz$" trivy_${TRIVY_VERSION}_checksums.txt | sha256sum -c -
+    - tar -zxf trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz
   allow_failure: true
   script:
     - docker build -t $IMAGE .
@@ -117,9 +122,12 @@ git push origin main
 > Notes on the job above:
 > - `TRIVY_VERSION` is pinned on purpose. The earlier version asked the GitHub API for the `latest` release on every run. Unauthenticated GitHub API calls are rate-limited, so the job could fail for reasons unrelated to your code. Update the pin deliberately (releases: https://github.com/aquasecurity/trivy/releases).
 > - `--template "@contrib/gitlab.tpl"` points to the template in the release tarball. The `@/contrib/...` path works only in the `aquasec/trivy` image. If you change `TRIVY_VERSION`, check that the template is still in the archive (`tar -tzf trivy_<version>_Linux-64bit.tar.gz | grep gitlab`) and that the archive file name did not change.
+> - The archive is checked against the `trivy_<version>_checksums.txt` file from the same release. If you change `TRIVY_VERSION`, confirm that the file name and the archive name in the release assets still match, otherwise `sha256sum -c` fails.
 > - `artifacts: when: always` uploads the report even when a job step fails.
 
 After the push, a new pipeline starts automatically. When it’s finished, you can check the results of the scan.
+
+**Expect:** the `trivy` job log shows the `docker info` output, the `Trivy 0.76.1` line and Trivy's scan output. With `FROM hello-world:latest` the findings list is empty. If the job fails with `Cannot connect to the Docker daemon`, privileged jobs are not enabled on your VM yet.
 
 ---
 
@@ -184,7 +192,7 @@ git commit -m "ci: add trivy repository scan job"
 git push origin main
 ```
 
-This job uses the official Trivy image to scan source code and configuration files for vulnerabilities. Results are printed in the job log and saved as the `trivy-repo-report.json` artifact. For more details, see the [Trivy repository scanning documentation](https://trivy.dev/v0.64/docs/target/repository/).
+This job uses the official Trivy image to scan source code and configuration files for vulnerabilities. Results are printed in the job log and saved as the `trivy-repo-report.json` artifact. For more details, see the [Trivy repository scanning documentation, check the page for your version](https://trivy.dev/latest/docs/target/repository/).
 
 > **Runner requirements on the stand:** the runners are unprivileged and have no Docker daemon in jobs. Docker-in-Docker (`docker:dind`) needs a privileged runner, which the operator enables per lab VM. For the `trivy` image-scan job, ask the operator to enable it for your VM; without it the job fails with `Cannot connect to the Docker daemon`. The `trivy-repo-scan` job needs no DinD and works on an unprivileged runner. Set `tags:` to the tags shown in **Settings > CI/CD > Runners**.
 

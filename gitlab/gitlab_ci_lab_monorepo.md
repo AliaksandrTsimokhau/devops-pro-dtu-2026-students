@@ -90,6 +90,9 @@ git push origin main
 ### `.gitlab-ci.yml` (control plane)
 
 ```yaml
+# Если job висит в pending, раскомментируйте блок и сохраняйте его во всех следующих версиях файла:
+# default: {tags: [lab-1, kubernetes]}
+
 stages:
   - build
   - test
@@ -172,7 +175,7 @@ git push origin main
 
 ### Что попробовать
 
-1. В GitLab перейдите **Build → Pipelines** — увидите запущенный pipeline. На первом push **все** jobs зелёные (это нормально — см. шаг 6).
+1. В GitLab перейдите **Build → Pipelines** — увидите запущенный pipeline. На этом push **все** jobs зелёные: коммит затрагивает и `java/`, и `python/`, поэтому совпали оба условия `changes`.
 2. Создайте ветку **без изменений** и запушьте её — это первый pipeline ветки (гоча #1, см. шаг 6: на новой ветке запускаются все include):
 
    ```bash
@@ -188,7 +191,7 @@ git push origin main
    git push origin update-java
    ```
 
-3. Откройте pipeline **второго** коммита. Должны выполниться только `top-level-job` и `java-*` jobs. `python-*` будут отсутствовать или skip.
+3. Откройте pipeline **второго** коммита. Должны выполниться только `top-level-job` и `java-*` jobs. `python-*` будут отсутствовать (не созданы).
 
 ### Боли legacy-подхода
 
@@ -357,7 +360,7 @@ git push origin feature/both               # второй pipeline
 
 1. Создаёте feature branch **БЕЗ** изменений и сразу пушите её (первый pipeline запустит всё — это ожидаемо).
 2. Все последующие коммиты пушите в уже существующую ветку → `rules:changes` сравнивает diff с предыдущим коммитом, и фильтрация работает.
-3. Альтернатива — MR-pipeline: он сравнивает изменения с целевой веткой, поэтому фильтрация работает уже в первом MR-pipeline. Но без `workflow:rules` у ветки с открытым MR будут два pipeline (branch и MR) — дубли.
+3. Альтернатива — MR-pipeline: он сравнивает изменения с целевой веткой. Но конфигурация этой лабы не рассчитана на MR: у `top-level-job` и include-правил нет условия `merge_request_event`, поэтому создаётся ли MR-pipeline и какие jobs в нём будут, здесь не гарантируется. Для MR-first подхода нужны `workflow:rules` и явное условие `$CI_PIPELINE_SOURCE == "merge_request_event"` в правилах.
 
 ### Гоча #2 — `'java/*'` vs `'java/**/*'`
 
@@ -389,11 +392,11 @@ func main() {
 	fmt.Println("hello from go")
 }
 EOF
-printf 'module example/go\n\ngo 1.22\n' > go/go.mod
+printf 'module example/go\n\ngo 1.25\n' > go/go.mod
 touch go/go.gitlab-ci.yml
 ```
 
-> Директива `go 1.22` в `go.mod` должна совпадать (или быть ниже) с версией образа `golang:1.22-alpine` из job'ов ниже; при смене образа обновите обе.
+> Директива `go 1.25` в `go.mod` должна совпадать (или быть ниже) с версией образа `golang:1.25-alpine` из job'ов ниже; при смене образа обновите обе. Проверьте, что тег `golang:1.25-alpine` существует; если нет, возьмите актуальную поддерживаемую версию Go.
 
 `go/go.gitlab-ci.yml`:
 
@@ -404,14 +407,14 @@ stages:
 
 go-build-job:
   stage: build
-  image: golang:1.22-alpine
+  image: golang:1.25-alpine
   script:
     - cd go
     - go build .
 
 go-test-job:
   stage: test
-  image: golang:1.22-alpine
+  image: golang:1.25-alpine
   script:
     - cd go
     - go test ./...

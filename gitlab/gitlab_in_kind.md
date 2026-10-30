@@ -4,6 +4,8 @@
 
 **Время:** ~40 минут (из них ~20 мин — ожидание запуска GitLab)
 
+> **Студентам стенда Servercore эта инструкция не нужна:** GitLab там уже установлен (HTTPS, доверенный сертификат), см. [servercore_gitlab.md](servercore_gitlab.md). Эта установка локальная.
+
 ---
 
 ## Требования к железу
@@ -142,7 +144,7 @@ gitlab-runner:
     config: |
       [[runners]]
         [runners.kubernetes]
-          image = "alpine:latest"
+          image = "alpine:3.22"
           helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:arm64-v18.11.2"
           privileged = true
 
@@ -274,6 +276,8 @@ kubectl -n gitlab get secret gitlab-gitlab-initial-root-password \
 
 Логин: `root` / `<пароль из команды выше>`
 
+> Эта установка работает по HTTP без TLS. Container Registry и OCI push из CI (build/push-лабы, full-cycle) на ней не заработают без доверенного HTTPS: для них используйте стенд Servercore или gitlab.com.
+
 ---
 
 ## Шаг 9. Проверка runner'а
@@ -297,7 +301,7 @@ kubectl -n gitlab logs -l app=gitlab-runner --tail=30
 | Порт 80 не биндится | Podman rootless не может < 1024 | `podman machine set --rootful kind` |
 | Runner зависает на "Pulling image" для helper | На arm64 runner пытается скачать x86_64 helper | Добавить `helper_image = "...arm64-..."` в runner config (уже в values выше) |
 | Webservice падает с OOMKill (exit 137) | 2 Puma worker'а × ~1.2 ГБ = 2.5 ГБ > лимит | `GITLAB_PUMA_WORKER_PROCESSES: "1"` + `memory limit: 3.5Gi` (уже в values выше) |
-| Pipeline падает: "no image specified" | Свой `runners.config` полностью заменяет конфиг из chart, вместе с default `image` | Задать `image = "alpine:latest"` в `[runners.kubernetes]` (уже в values выше) или указывать `image:` в каждом job |
+| Pipeline падает: "no image specified" | Свой `runners.config` полностью заменяет конфиг из chart, вместе с default `image` | Задать `image = "alpine:3.22"` в `[runners.kubernetes]` (уже в values выше) или указывать `image:` в каждом job |
 | pip install падает с SSL error | Корпоративный SSL inspection подменяет сертификаты | Не использовать `pip3 install` в компонентах — используйте stdlib или собственный Docker-образ |
 
 ---

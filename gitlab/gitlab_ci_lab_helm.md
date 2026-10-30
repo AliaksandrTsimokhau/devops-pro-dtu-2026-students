@@ -2,15 +2,15 @@
 
 > **Справочная лаба.** Образ `alpine/helm:3.13.3` — Helm 3, примеры рассчитаны на него; флаги Helm 4 здесь не используются. Для рабочего пайплайна с Helm 4 и деплоем см. [helm_gitlab_cicd_lab.md](../helm/helm_gitlab_cicd_lab.md).
 >
-> **Self-hosted GitLab в kind** отдаёт API и registry по `http://`. Скрипт использует `$CI_API_V4_URL` (схема уже правильная), поэтому `curl` работает без изменений. Для `helm` с HTTP-реестром добавьте `--plain-http` (флаг есть у `helm push` и `helm registry login`). Переменная `HELM_PACKAGE_REPO` с `https://` в этой лабе не используется.
+> **GitLab стенда** работает по HTTPS с доверенным сертификатом, git только по HTTPS. Скрипт использует `$CI_API_V4_URL` (схема и хост уже правильные), поэтому `curl` работает без изменений и флаги `--plain-http` или пропуск проверки TLS не нужны.
 GitLab CI/CD пайплайн автоматизирует процесс сборки, тестирования и отправки Helm чарта в GitLab Package Repository. Используя команду `helm lint` на этапе тестирования, вы можете убедиться, что ваш Helm чарт соответствует стандартам качества перед его отправкой в репозиторий
 
 ## Инструкция по созданию GitLab репозитория
 Создание репозитория в GitLab — это первый шаг для начала работы с системой контроля версий и автоматизации CI/CD процессов. Следуйте этой инструкции, чтобы создать новый репозиторий в GitLab.
 
 ## 1. Регистрация и вход в GitLab
-Перейдите по ссылке https://gitlab-devops-dtu.ip-dynamic.org/ на сайт GitLab.
-Зарегистрируйтесь или войдите в свою учетную запись.
+Откройте GitLab стенда: `https://<gitlab-host>/` (адрес указан в материалах курса).
+Войдите под выданной вам учётной записью.
 
 ## 2. Создание нового проекта
 После входа в систему нажмите на кнопку "New project" на главной странице или в меню навигации.
@@ -28,14 +28,14 @@ GitLab CI/CD пайплайн автоматизирует процесс сбо
 Нажмите кнопку `Create project` для создания нового проекта.
 После создания проекта вы будете перенаправлены на страницу репозитория. Вам нужно клонировать репозиторий на локальную машину для дальнейшей работы.
 
-На странице репозитория нажмите на кнопку `Clone` и скопируйте URL репозитория.
+На странице репозитория нажмите на кнопку `Clone` и скопируйте URL **HTTPS** (SSH на стенде закрыт; вместо пароля используйте personal access token: Edit profile > Access tokens, scope `write_repository`).
 Откройте терминал на вашей локальной машине и выполните команду для клонирования репозитория:
 ```bash
 git clone <URL вашего репозитория>
 ```
 Например:
 ```
-git clone https://gitlab-devops-dtu.ip-dynamic.org/your-username/my-helm-chart.git
+git clone https://<gitlab-host>/your-username/my-helm-chart.git
 ```
 ## Добавление файлов в репозиторий
 Перейдите в каталог вашего репозитория:
@@ -132,16 +132,21 @@ stages:
 
 variables:
   HELM_PACKAGE_NAME: "demo-chart"
-  HELM_PACKAGE_VERSION: "0.1.0"
-  HELM_PACKAGE_REPO: "https://$CI_SERVER_HOST/api/v4/projects/$CI_PROJECT_ID/packages/helm"
+  HELM_PACKAGE_VERSION: "0.1.0"   # должна совпадать с version: в demo-chart/Chart.yaml
 
-image: alpine/helm:3.13.3
+# Образ alpine/helm запускает helm как entrypoint, поэтому для shell-скриптов entrypoint сбрасываем
+image:
+  name: alpine/helm:3.13.3
+  entrypoint: [""]
+
+default:
+  tags: [lab-1, kubernetes]   # свои теги смотрите в Settings > CI/CD > Runners
 
 build:
   stage: build
   script:
     - echo "Packaging Helm chart..."
-    - helm package ./demo-chart --version $HELM_PACKAGE_VERSION --app-version $HELM_PACKAGE_VERSION
+    - helm package ./demo-chart --version $HELM_PACKAGE_VERSION
   artifacts:
     paths:
       - "*.tgz"
@@ -156,6 +161,8 @@ test:
 
 deploy:
   stage: deploy
+  before_script:
+    - apk add --no-cache curl
   script:
     - echo "Uploading Helm chart to GitLab Package Repository..."
     - 'curl --fail-with-body --request POST
@@ -172,7 +179,8 @@ deploy:
 
 ## Описание:
 `stages`: Определяет этапы пайплайна: build, test, deploy.
-`variables`: Определяет переменные для имени пакета Helm, версии и URL репозитория.
+`variables`: Определяет имя пакета Helm и версию. Версия должна совпадать с `version:` в `Chart.yaml`, иначе имя `.tgz` не совпадёт и загрузка упадёт. `--app-version` не передаётся: `appVersion` берётся из `Chart.yaml`.
+`image`: `alpine/helm` с `entrypoint: [""]`, иначе скрипты `script:` не запустятся; `curl` для загрузки ставится в `deploy` через `apk`. `tags`: теги раннера стенда.
 `build`:
     **stage**: Указывает, что это этап сборки.
     **script**: Выполняет команду helm package для упаковки Helm чарта.
@@ -213,7 +221,7 @@ git push origin main
 
 #### 3. Доступ к странице CI/CD пайплайнов
 
-1. В левом боковом меню нажмите на **CI/CD**, чтобы развернуть меню.
+1. В левом боковом меню нажмите на **Build**, чтобы развернуть меню.
 2. Нажмите на **Pipelines** (Пайплайны), чтобы просмотреть список пайплайнов для вашего проекта.
 
 #### 4. Просмотр статуса пайплайна
@@ -246,7 +254,9 @@ git push origin main
 
 ### 9. Проверка загрузки helm чарта в репозиторий проекта
 1. В левом боковом меню нажмите на **Deploy**, чтобы развернуть меню.
-2. Нажмите на **Package Registry**, чтобы просмотреть список артифактов в хранилище вашего проекта.
+2. Нажмите на **Package Registry**, чтобы просмотреть список артефактов в хранилище вашего проекта.
+
+**Ожидаемый результат:** в списке есть пакет `demo-chart` версии `0.1.0`.
 
 # Заключение
 Теперь у вас есть новый репозиторий в GitLab с настроенным CI/CD пайплайном. Вы можете продолжать добавлять файлы и конфигурации в ваш проект, а также использовать GitLab CI/CD для автоматизации сборки, тестирования и развертывания вашего приложения.
@@ -258,17 +268,19 @@ git push origin main
 - [ ] Helm chart создан командой `helm create` и закоммичен.
 - [ ] `.gitlab-ci.yml` добавлен с тремя стадиями: build, test, deploy.
 - [ ] Pipeline запустился после `git push` и все три стадии зелёные.
-- [ ] Helm chart появился в **Deploy → Package Registry** проекта.
+- [ ] Helm chart появился в **Deploy > Package Registry** проекта.
 - [ ] Deploy job запускается только на ветке `main`.
 
 ## Дополнительное задание — деплой в Kubernetes
+
+> На стенде runner непривилегированный и не хранит учётных данных кластера, а kind-кластер находится на вашей VM. Для деплоя из pipeline рекомендуемые варианты: GitLab Agent for Kubernetes ([gitlab_agent_k8s_lab.md](gitlab_agent_k8s_lab.md)) или лаба полного цикла ([gitlab_ci_lab_full_cycle.md](gitlab_ci_lab_full_cycle.md)). Вариант ниже с токеном ServiceAccount в CI/CD-переменных упрощённый: любой участник проекта с доступом к переменным может прочитать токен, поэтому выдавайте права только на namespace `demo` и короткий срок жизни.
 
 Расширьте pipeline: добавьте job `deploy-k8s`, который деплоит chart в кластер через `helm upgrade --install`.
 
 **Переменные для runner'а:**
 
 ```
-HELM_KUBEAPISERVER — адрес API-сервера кластера, например https://<cluster-api>:6443
+HELM_KUBEAPISERVER — адрес API-сервера кластера, например https://<cluster-api>:6443 (должен быть доступен из pod'а job'а)
 HELM_KUBETOKEN     — токен ServiceAccount (Masked)
 HELM_KUBECAFILE    — CA-сертификат кластера (тип переменной: File)
 ```
@@ -278,7 +290,7 @@ Helm читает эти переменные окружения сам, пер�
 **Шаги:**
 
 1. Создайте namespace `demo` (`kubectl create namespace demo`), в нём ServiceAccount с правами на этот namespace, и сгенерируйте токен: `kubectl -n demo create token <sa-name> --duration=24h`.
-2. В GitLab добавьте переменные: **Settings → CI/CD → Variables**.
+2. В GitLab добавьте переменные: **Settings > CI/CD > Variables**.
 3. Добавьте job в `.gitlab-ci.yml`:
 
 ```yaml
@@ -287,7 +299,8 @@ deploy-k8s:
   script:
     - helm upgrade --install demo-chart ./demo-chart
         --namespace demo
-        --set image.repository=registry.example.com/my-app
+        --set image.repository=nginx
+        --set image.tag=1.27
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
@@ -300,3 +313,5 @@ git add .gitlab-ci.yml
 git commit -m "feat: add k8s deploy job"
 git push origin main
 ```
+
+**Expect:** job `deploy-k8s` зелёный, а `kubectl -n demo get pods` показывает pod чарта в статусе `Running` (образ `nginx:1.27` берётся из публичного Docker Hub). Если job падает с таймаутом подключения, API-сервер кластера недоступен из pod'а runner'а: используйте GitLab Agent.

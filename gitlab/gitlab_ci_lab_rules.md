@@ -1,6 +1,6 @@
 # Lab: управление запуском jobs через `rules`
 
-В этой лабораторной мы практикуем все четыре механизма `rules` в GitLab CI: `if`, `changes`, `exists`, и `$CI_PIPELINE_SOURCE`. Для каждого создаём условие, делаем push и смотрим, какие jobs появились в pipeline, а какие нет.
+В этой лабораторной мы практикуем механизмы `rules` в GitLab CI: `if`, `changes`, `exists`, а также переменную `$CI_PIPELINE_SOURCE` в условиях `if`. Для каждого создаём условие, делаем push и смотрим, какие jobs появились в pipeline, а какие нет.
 
 **Главный вывод:** `rules` оцениваются сверху вниз — первое совпавшее условие определяет поведение job'а.
 
@@ -17,9 +17,9 @@
 
 ## Prerequisites
 
-- Аккаунт в GitLab (gitlab.com или self-hosted; минимальная версия с поддержкой `compare_to` в `rules:changes` — **проверь** в документации вашей версии).
+- Аккаунт на GitLab стенда (GitLab 19.x; `compare_to` в `rules:changes` поддерживается).
 - Установленный `git` локально.
-- Включённый runner в проекте.
+- Runner в проекте. На стенде это ваш runner с тегами `lab-1` или `lab-2` и `kubernetes` (точные теги проверьте в **Settings > CI/CD > Runners**; Kubernetes executor без привилегий, образ по умолчанию `alpine:3.22`). Если job висит в `pending`, добавьте в `.gitlab-ci.yml` блок `default:` с `tags: [lab-1, kubernetes]` (подставьте свои теги) или включите **Run untagged jobs** у runner'а.
 - 30–40 минут.
 
 > **Примечание:** без `compare_to` `rules:changes` для push-pipeline сравнивает текущий коммит с предыдущим, а для **первого push новой ветки** всегда возвращает `true` — все jobs с `changes` запустятся. Поэтому в шаге 2 мы сравниваем с `main` через `compare_to: refs/heads/main`. Тогда на самой ветке `main` сравнение пустое, и `build`/`test` там не запускаются — это ожидаемо.
@@ -31,7 +31,7 @@
 ```bash
 # Создайте проект в GitLab: New project → Create blank project
 # Имя: rules-lab, Initialize with README
-git clone https://gitlab.example.com/<your-namespace>/rules-lab.git
+git clone https://<gitlab-host>/<your-namespace>/rules-lab.git
 cd rules-lab
 ```
 
@@ -47,7 +47,7 @@ echo 'FROM alpine:3.20' > Dockerfile
 Создайте базовый `.gitlab-ci.yml`:
 
 ```yaml
-image: alpine:latest
+image: alpine:3.22
 
 stages:
   - build
@@ -121,7 +121,7 @@ git push origin feature/rules-test
 Обновите `.gitlab-ci.yml` — `build` запускается только при изменениях в `src/`, `test` — только в `tests/`:
 
 ```yaml
-image: alpine:latest
+image: alpine:3.22
 
 stages:
   - build
@@ -133,7 +133,7 @@ build:
   script:
     - echo "Building..."
   rules:
-    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH || $CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
         paths:
           - src/**/*
@@ -144,7 +144,7 @@ test:
   script:
     - echo "Testing..."
   rules:
-    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH || $CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
         paths:
           - tests/**/*
@@ -166,6 +166,8 @@ git push origin main
 ```
 
 > На `main` после этого коммита `build` и `test` не появятся: сравнение `main` с `main` пустое. Это ожидаемо.
+>
+> Условие `$CI_COMMIT_BRANCH || $CI_PIPELINE_SOURCE == "merge_request_event"` нужно потому, что в MR-pipeline переменная `$CI_COMMIT_BRANCH` не задана; без второй части `build` и `test` не появились бы в MR.
 
 **Тест A — изменение только в `src/`:**
 
@@ -259,19 +261,19 @@ git push origin main
 > git push origin feature/mr-test
 > ```
 
-1. Откройте **Merge requests → New merge request**.
+1. Откройте **Code > Merge requests > New merge request**.
 2. Source branch: `feature/mr-test`. Target: `main`.
 3. После создания MR — откройте **Pipelines** в MR.
 
-`integration-test` должен появиться (source = `merge_request_event`).
+`integration-test` должен появиться (source = `merge_request_event`). Также появится `build` (в ветке изменён `src/`); `deploy` отсутствует (`$CI_COMMIT_BRANCH` в MR-pipeline не задана).
 
 **Тест C — schedule (опционально):**
 
-1. **CI/CD → Schedules → New schedule**.
-2. Description: `nightly`, Cron: `0 2 * * *`.
-3. Нажмите **Run pipeline manually** (кнопка рядом со schedule).
+1. **Build > Pipeline schedules > New schedule**.
+2. Description: `nightly`, Cron: `0 2 * * *`, Target branch: `main`.
+3. Нажмите **Run schedule pipeline** (иконка ▶ рядом со schedule).
 
-`nightly-scan` запустится, остальные — нет.
+`nightly-scan` запустится; `deploy` тоже (расписание идёт на `main`, а `$CI_COMMIT_BRANCH` в нём задана); `integration-test` — нет.
 
 **Все возможные значения `$CI_PIPELINE_SOURCE`:**
 
@@ -302,6 +304,7 @@ docker-build:
 ```
 
 ```bash
+git checkout main && git pull
 git add .gitlab-ci.yml
 git commit -m "rules step 4: exists condition"
 git push origin main
@@ -350,6 +353,7 @@ deploy:
 ```
 
 ```bash
+git checkout main
 git add .gitlab-ci.yml
 git commit -m "rules step 5: when chain (auto/manual/never)"
 git push origin main
@@ -396,6 +400,7 @@ workflow:
 ```
 
 ```bash
+git checkout main
 git add .gitlab-ci.yml
 git commit -m "rules step 6: workflow rules"
 git push origin main
@@ -414,7 +419,9 @@ git commit -am "test: push without MR"
 git push origin feature/no-mr
 ```
 
-Перейдите **CI/CD → Pipelines** — pipeline для этой ветки не создан.
+Перейдите **Build > Pipelines** — pipeline для этой ветки не создан.
+
+Чтобы увидеть `build` и `test` после этого шага, откройте MR из такой ветки: в MR-pipeline они работают, потому что условие учитывает `merge_request_event`.
 
 ---
 
@@ -428,7 +435,7 @@ workflow:
     - if: '$CI_COMMIT_TAG'
     - when: never
 
-image: alpine:latest
+image: alpine:3.22
 
 stages:
   - build
@@ -440,7 +447,7 @@ build:
   script:
     - echo "Building..."
   rules:
-    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH || $CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
         paths:
           - src/**/*
@@ -459,7 +466,7 @@ test:
   script:
     - echo "Testing..."
   rules:
-    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH || $CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
         paths:
           - tests/**/*
@@ -503,7 +510,7 @@ git push origin main
 
 - [ ] Проект создан, базовая структура `src/`, `tests/`, `Dockerfile` закоммичена.
 - [ ] Шаг 1 — `deploy` отсутствует на feature-ветке, появляется на `main`.
-- [ ] Шаг 2 — изменение в `src/` триггерит только `build`; в `tests/` — только `test`.
+- [ ] Шаг 2 — изменение в `src/` триггерит только `build`; в `tests/` — только `test` (после шага 6 это видно в MR-pipeline).
 - [ ] Шаг 3 — `integration-test` появляется только в MR-pipeline.
 - [ ] Шаг 4 — `docker-build` исчез после удаления `Dockerfile`, вернулся после восстановления.
 - [ ] Шаг 5 — `deploy` появляется как manual на `main`; запускается автоматически при теге `v*`.

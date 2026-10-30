@@ -12,7 +12,7 @@
 - JSON-артефакты и quality gate: report mode на ветках, enforce mode на `main`
 - Что даёт платный Security-функционал GitLab и чем его заменить
 
-**Requires:** Runner (Docker или Kubernetes executor), **без DinD и privileged**. Доступ раннера в интернет (скачивание образов, правил semgrep, баз Trivy).  
+**Requires:** Runner (на стенде это непривилегированный Kubernetes executor с тегами `lab-1`/`lab-2` и `kubernetes`; точные теги смотрите в Settings > CI/CD > Runners), **без DinD и privileged** — просить оператора включать privileged не нужно. Доступ раннера в интернет (скачивание образов, правил semgrep, баз Trivy).  
 **Lab order:** trivy lab first ([`gitlab_ci_lab_basic_trivy_scan.md`](gitlab_ci_lab_basic_trivy_scan.md)), then this lab. Предыдущая лаба — Trivy по образу через DinD; её job `trivy-repo-scan` сканирует репозиторий образом `aquasec/trivy` без DinD, как и здесь.
 
 > В отличие от Trivy-лабы здесь нет `docker build`, поэтому DinD не нужен. Все сканеры работают по файлам репозитория — это дешевле и быстрее.
@@ -91,16 +91,16 @@ git add . && git commit -m "add vulnerable sample app" && git push origin main
 
 ## Step 2: Scanner jobs
 
-Версии образов **не закрепляем по памяти**, поэтому три образа заданы переменными в одном блоке `variables:` в начале файла. Пока вы не замените значение после двоеточия на реальный тег, job упадёт с `invalid reference format` — это ожидаемо.
+Три образа заданы переменными в одном блоке `variables:` в начале файла. Для Trivy тег уже закреплён (`0.76.1`, проверен на стенде). Для gitleaks и semgrep тег нужно выбрать самим: пока вы не замените `ЗАМЕНИТЕ_НА_ТЕГ` на реальный тег, соответствующий job упадёт с `invalid reference format` — это ожидаемо. Если переменная образа вообще не задана, job тихо запустится в `alpine:3.22` (образ раннера по умолчанию) и упадёт с `<tool>: not found`.
 
 **Как выбрать тег:**
 
-1. Откройте страницу тегов образа на Docker Hub: `zricethezav/gitleaks`, `semgrep/semgrep`, `aquasec/trivy`.
+1. Откройте страницу тегов образа на Docker Hub: `https://hub.docker.com/r/zricethezav/gitleaks/tags` и `https://hub.docker.com/r/semgrep/semgrep/tags` (последние релизы также на GitHub: gitleaks/gitleaks, semgrep/semgrep).
 2. Возьмите последний стабильный тег (не `latest`, не `rc`/`dev`).
-3. Проверьте локально, что образ запускается: `docker run --rm <образ>:<тег> --version` (для gitleaks — `version`, для trivy — `version`).
+3. Проверьте локально, что образ запускается: `docker run --rm <образ>:<тег> --version` (для gitleaks — `version`, для semgrep — `--version`).
 4. Подставьте тег в `variables:` и закоммитьте. Выбранные теги запишите в README проекта.
 
-Для trivy тоже берём тег вместо `latest`: в предыдущей лабе образ для `trivy-repo-scan` тоже задан переменной `TRIVY_IMAGE`, и тег там нужно `проверить` так же.
+Для trivy тоже берём тег вместо `latest`: в предыдущей лабе образ для `trivy-repo-scan` задан той же переменной `TRIVY_IMAGE` (`aquasec/trivy:0.76.1`).
 
 Создайте `.gitlab-ci.yml`:
 
@@ -110,12 +110,13 @@ stages: [test, gate]
 variables:
   GITLEAKS_IMAGE: zricethezav/gitleaks:ЗАМЕНИТЕ_НА_ТЕГ
   SEMGREP_IMAGE: semgrep/semgrep:ЗАМЕНИТЕ_НА_ТЕГ
-  TRIVY_IMAGE: aquasec/trivy:ЗАМЕНИТЕ_НА_ТЕГ
+  TRIVY_IMAGE: aquasec/trivy:0.76.1
   TRIVY_NO_PROGRESS: "true"
   TRIVY_CACHE_DIR: ".trivycache/"
 
 .scan:
   stage: test
+  tags: [lab-1, kubernetes]   # свои теги смотрите в Settings > CI/CD > Runners
   # Report mode на ветках и MR, enforce mode на default-ветке
   allow_failure: true
   rules:
@@ -201,7 +202,8 @@ Gate читает JSON из артефактов и применяет един�
 ```yaml
 security-gate:
   stage: gate
-  image: alpine:3.20   # проверь поддерживаемую версию на https://alpinelinux.org/releases/ и обновите тег, если ветка EOL
+  image: alpine:3.22   # образ раннера по умолчанию на стенде
+  tags: [lab-1, kubernetes]   # те же теги, что в .scan
   needs:
     - job: gitleaks
       artifacts: true
@@ -297,7 +299,7 @@ Gitleaks всё равно будет красным на `main`, пока то�
 | SAST и Secret Detection шаблоны (`Security/SAST.gitlab-ci.yml`, `Security/Secret-Detection.gitlab-ci.yml`) | Free запускает их, но результат только в JSON-артефактах |
 | Dependency Scanning, DAST, Security tab пайплайна, security widget в MR, Vulnerability Report | Ultimate |
 
-> `проверь по документации вашей версии` GitLab: состав тарифов и то, что попадает в UI, меняются между релизами.
+> Сверьтесь с документацией вашей версии GitLab: состав тарифов и то, что попадает в UI, меняются между релизами.
 
 Практический вывод: на Free встроенного UI для уязвимостей нет. Результаты живут в логах и JSON-артефактах, а gate — это ваш job.
 

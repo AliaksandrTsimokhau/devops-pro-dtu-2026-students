@@ -1,175 +1,162 @@
-> ⚠️ **Шаблон `Terraform.gitlab-ci.yml` больше не опубликован GitLab.com** (проверено через templates API).
-> Образ `registry.gitlab.com/gitlab-org/terraform-images/stable:latest` из этой лабы и обёртка
-> `gitlab-terraform` тоже могут быть изменены или удалены — **проверь** их доступность до начала работы.
-> Актуальный вариант: OpenTofu CI/CD component из GitLab CI/CD Catalog (**проверь точное имя компонента и версию в Catalog**: Explore → CI/CD Catalog → поиск «OpenTofu»). Имя не угадывайте.
-> Если используете компонент, jobs и переменные ниже придётся адаптировать под его документацию (**проверь:** имена jobs и inputs).
+# Lab: OpenTofu state в GitLab
 
-## Useful Resources
+Создадим pipeline `validate -> plan -> apply -> destroy` с GitLab HTTP backend. Пример работает на GitLab.com и на Servercore GitLab CE. Используем OpenTofu 1.13.1 напрямую; внешние CI/CD components и удалённые Terraform templates не нужны.
 
-- [Managing Multiple Environments with Terraform and GitLab CI](https://about.gitlab.com/blog/managing-multiple-environments-with-terraform-and-gitlab-ci/)
-- [GitLab Terraform State Documentation](https://docs.gitlab.com/user/infrastructure/iac/terraform_state/)
+**Требуется:** роль Maintainer или Owner в проекте (для записи и блокировки state), runner с Docker или Kubernetes executor, доступ из job к GitLab API и `ghcr.io`. На Servercore сначала пройдите [подготовку стенда](servercore_gitlab.md). Shell executor не исполняет указанный `image:`.
 
----
+## Шаг 1. Проект и минимальная инфраструктура
 
-## Шаг 1: Создайте репозиторий
+Создайте private-проект `terraform-gitlab-ci-lab` с README, склонируйте его по URL из UI и создайте каталоги:
 
-1. **Создайте репозиторий**
-   - **New project → Create blank project**.
-   - Имя: `terraform-gitlab-ci-lab`.
-   - Visibility: Private.
-   - Отметьте **Initialize repository with a README**.
-   - Нажмите **Create project**.
+```bash
+mkdir -p terraform .gitlab-ci
+```
 
-2. **Клонируйте репозиторий локально**
+В `terraform/main.tf`:
 
-   ```bash
-   git clone https://gitlab.example.com/<your-namespace>/terraform-gitlab-ci-lab.git
-   cd terraform-gitlab-ci-lab
-   ```
-
-> Access token и CI/CD-переменные для state не нужны: `gitlab-terraform` авторизуется в HTTP backend через `CI_JOB_TOKEN`, который GitLab выдаёт каждому job'у.
-
----
-
-## Шаг 2: Создайте `provider.tf` и `main.tf`
-
-**provider.tf**
 ```hcl
 terraform {
-  backend "http" {} # for gitlab
+  required_version = ">= 1.13.1, < 2.0"
+  backend "http" {}
+}
+
+resource "terraform_data" "example" {
+  input = "gitlab-ci-lab"
 }
 ```
 
-**main.tf** — минимальный ресурс для проверки pipeline (например, null_resource или любой ресурс):
+Этот ресурс встроен в OpenTofu: облачный аккаунт и PAT для первой лабы не нужны. Добавьте в `.gitignore`:
 
-```hcl
-resource "null_resource" "example" {}
+```gitignore
+**/.terraform/
+**/plan.cache
+**/plan.json
+*.tfstate
+*.tfstate.*
 ```
 
-Закоммитьте файлы:
+При добавлении внешних providers создайте и закоммитьте `.terraform.lock.hcl`. Не коммитьте state и планы: они могут содержать секреты.
 
-```bash
-git add provider.tf main.tf
-git commit -m "terraform: add provider and main config"
-git push origin main
-```
+## Шаг 2. Общие jobs: `.gitlab-ci/opentofu.yml`
 
----
-
-## Шаг 3: Настройте хранение Terraform State в GitLab
-
-GitLab предоставляет встроенный HTTP backend для хранения Terraform state — никакого дополнительного S3 или Consul не нужно. State хранится в **Operate → Terraform states** вашего проекта.
-
-Адрес state задаётся переменной `TF_ADDRESS` в `.gitlab-ci.yml` (шаг 4). `CI_API_V4_URL` и `CI_PROJECT_ID` — предопределённые переменные, GitLab подставит их сам.
-
-Просмотреть state файлы можно через:
-- Left sidebar → **Operate → Terraform states**.
-
----
-
-## Шаг 4: Создайте `.gitlab-ci.yml`
-
-Создайте файл `.gitlab-ci.yml` в корне репозитория:
+Скопируйте весь блок в этот файл. Этот же файл используется в [лабе с пятью окружениями](gitlab_ci_lab_five_envs.md).
 
 ```yaml
-image: registry.gitlab.com/gitlab-org/terraform-images/stable:latest
+.tofu:
+  image:
+    name: ghcr.io/opentofu/opentofu:1.13.1
+    entrypoint: [""]
+  variables:
+    TF_ROOT: terraform
+    TF_IN_AUTOMATION: "true"
+    TF_INPUT: "false"
+  before_script:
+    - |
+      export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+      export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+      export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+      export TF_HTTP_LOCK_METHOD=POST TF_HTTP_UNLOCK_METHOD=DELETE
+      export TF_HTTP_USERNAME=gitlab-ci-token TF_HTTP_PASSWORD="$CI_JOB_TOKEN"
+      export TF_HTTP_RETRY_WAIT_MIN=5
+      cd "$CI_PROJECT_DIR/$TF_ROOT"
+      tofu init -reconfigure
 
-variables:
-  TF_STATE: "tf_state"
-  TF_ADDRESS: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE}
-
-cache:
-  key: ${TF_STATE}
-  paths:
-    - .terraform
-
-stages:
-  - validate
-  - build
-  - deploy
-  - destroy
-
-init:
-  stage: .pre
-  script:
-    - gitlab-terraform init
-
-fmt:
-  stage: .pre
-  script:
-    - gitlab-terraform fmt
-
-validate:
+.tofu-validate:
+  extends: .tofu
   stage: validate
   script:
-    - gitlab-terraform validate
+    - tofu fmt -check
+    - tofu validate
+
+.tofu-plan:
+  extends: .tofu
+  stage: plan
+  resource_group: state-$TF_STATE_NAME
+  script:
+    - tofu plan -lock-timeout=60s -out=plan.cache
+    - tofu show -json plan.cache > plan.json
+  artifacts:
+    access: maintainer
+    expire_in: 1 day
+    paths:
+      - ${TF_ROOT}/plan.cache
+      - ${TF_ROOT}/plan.json
+      - ${TF_ROOT}/.terraform.lock.hcl
+
+.tofu-apply:
+  extends: .tofu
+  stage: deploy
+  resource_group: state-$TF_STATE_NAME
+  script:
+    - tofu apply -lock-timeout=60s -auto-approve plan.cache
+
+.tofu-destroy:
+  extends: .tofu
+  stage: cleanup
+  resource_group: state-$TF_STATE_NAME
+  script:
+    - tofu destroy -lock-timeout=60s -auto-approve
+```
+
+`TF_STATE_NAME` задаёт вызывающий pipeline. Токен backend берётся из окружения текущей job, поэтому apply не использует уже истёкший токен plan-job. Каталог `.terraform` не передаём через cache. Планы передаём как artifacts с доступом Maintainer; `plan.json` здесь обычный JSON-артефакт, без обещания MR-widget на Free.
+
+Образ закреплён на 1.13.1. `artifacts:access: maintainer` требует GitLab 18.4+; Servercore ставит актуальный пакет. Для более старого GitLab используйте поддерживаемое им ограничение доступа к artifacts. Отсутствие `.terraform.lock.hcl` у встроенного `terraform_data` даёт предупреждение при загрузке artifacts; файлы плана всё равно загружаются.
+
+## Шаг 3. Главный pipeline: `.gitlab-ci.yml`
+
+```yaml
+include:
+  - local: .gitlab-ci/opentofu.yml
+
+stages: [validate, plan, deploy, cleanup]
+
+variables:
+  TF_STATE_NAME: tf-state
+
+validate:
+  extends: .tofu-validate
 
 plan:
-  stage: build
-  script:
-    - gitlab-terraform plan
-    - gitlab-terraform plan-json
-  artifacts:
-    name: plan
-    paths:
-      - plan.cache
-    reports:
-      terraform: plan.json
+  extends: .tofu-plan
 
 apply:
-  stage: deploy
-  script:
-    - gitlab-terraform apply
-  dependencies:
-    - plan
+  extends: .tofu-apply
+  needs:
+    - job: plan
+      artifacts: true
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: manual
+  allow_failure: false
 
 destroy:
-  stage: destroy
-  script:
-    - gitlab-terraform destroy
-  dependencies:
-    - apply
+  extends: .tofu-destroy
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: manual
+  allow_failure: true
 ```
 
-Закоммитьте и запушьте:
+В **Build -> Pipeline editor -> Validate** проверьте объединённую конфигурацию. Затем:
 
 ```bash
-git add .gitlab-ci.yml
-git commit -m "ci: add terraform pipeline"
-git push origin main
+git add .
+git commit -m "ci: add OpenTofu state pipeline"
+git push
 ```
 
-После пуша pipeline запустится автоматически. Стадии `init` и `fmt` выполнятся в `.pre`, затем `validate` и `plan`. Стадии `apply` и `destroy` — ручные (кнопка в UI).
+На default branch выполните `apply`, затем проверьте **Operate -> Terraform states**: появится `tf-state`. Запустите `destroy` и проверьте обновлённый state. Если план старше суток, повторите plan-job перед apply. При ошибке stale plan создайте новый план.
 
----
+## Самопроверка
 
-## Шаг 5: Мониторинг pipeline
+- [ ] Job выполняется в образе OpenTofu, `tofu version` показывает 1.13.1.
+- [ ] `validate` и `plan` зелёные; artifacts содержат `plan.cache` и `plan.json`.
+- [ ] `apply` получает план через `needs`, требует ручного запуска и создаёт state.
+- [ ] `destroy` удаляет ресурс и оставляет обновлённый state.
+- [ ] Backend использует URL текущего GitLab и токен текущей job.
 
-Откройте **CI/CD → Pipelines** в GitLab UI. Вы увидите запущенный pipeline с этапами:
+## Ссылки
 
-- `.pre` — `init` + `fmt` (автоматически)
-- `validate` — проверка синтаксиса (автоматически)
-- `build` — `plan` + `plan-json`, артефакт plan.cache (автоматически)
-- `deploy` — `apply` (нажмите ▶ вручную)
-- `destroy` — `destroy` (нажмите ▶ вручную, осторожно!)
-
-После `apply` откройте **Operate → Terraform states** — должен появиться state файл `tf_state`.
-
----
-
-## Чеклист самопроверки
-
-- [ ] Репозиторий создан и склонирован локально.
-- [ ] `provider.tf` и `main.tf` закоммичены и запушены.
-- [ ] `.gitlab-ci.yml` закоммичен и запушен.
-- [ ] Pipeline запустился: `.pre`, `validate`, `build` (plan) прошли зелёными.
-- [ ] `plan` job создал артефакт `plan.cache`.
-- [ ] `apply` выполнен вручную через UI.
-- [ ] Terraform state появился в **Operate → Terraform states**.
-- [ ] `destroy` выполнен вручную — ресурсы удалены, state обновился.
+- [GitLab-managed state](https://docs.gitlab.com/user/infrastructure/iac/terraform_state/)
+- [Почему backend-пароль передают через окружение](https://docs.gitlab.com/user/infrastructure/iac/troubleshooting/)
+- [OpenTofu releases](https://github.com/opentofu/opentofu/releases)

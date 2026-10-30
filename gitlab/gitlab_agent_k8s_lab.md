@@ -2,7 +2,7 @@
 
 **Duration:** 60–90 min
 **Difficulty:** ★★★☆☆
-**Requires:** kind-кластер, GitLab с включённым **KAS** (см. Шаг 0), Helm-чарт из [helm_gitlab_cicd_lab.md](../helm/helm_gitlab_cicd_lab.md), `helm`, `kubectl`, опционально `glab`
+**Requires:** kind-кластер, GitLab с включённым **KAS** (см. Шаг 0; на стенде Servercore — [servercore_gitlab.md](servercore_gitlab.md)), Helm-чарт из [helm_gitlab_cicd_lab.md](../helm/helm_gitlab_cicd_lab.md), `helm`, `kubectl`, опционально `glab`
 
 > Пометка **проверь:** означает факт, который не подтверждён запуском при написании лабы. Сверьтесь с документацией вашей версии GitLab/Helm или выполните указанную команду.
 
@@ -35,12 +35,22 @@
 | GitLab | KAS |
 |--------|-----|
 | **gitlab.com** | Работает из коробки, адрес показывает UI на шаге регистрации (**проверь:** `wss://kas.gitlab.com`) |
+| **Servercore / Linux package** | KAS включён по умолчанию; используйте URL из UI и [Servercore hostAliases](servercore_gitlab.md#деплой-в-kind). Шаги 0.1-0.2 про установку GitLab Helm chart пропустите, начните с Шага 1. |
 | **Self-hosted (Helm chart)** | Нужно `global.kas.enabled: true` |
 | **Self-hosted в kind из [gitlab_in_kind.md](gitlab_in_kind.md)** | В values стоит `global.kas.enabled: false` — **включите**, иначе регистрация агента не завершится |
+| **Стенд Servercore** (GitLab CE 19.x, Linux package, HTTPS) | KAS уже включён. **Шаги 0.1 и 0.2 пропустите.** Адрес KAS: `wss://<gitlab-host>/-/kubernetes-agent/` |
+
+**Стенд Servercore: проверка KAS.** С вашей VM:
+
+```sh
+curl -sI https://<gitlab-host>/-/kubernetes-agent/ | head -1
+```
+
+**Expect:** `HTTP/2 426` (KAS отвечает и ждёт WebSocket). Если ответа нет или другой код, обратитесь к оператору. Если имя GitLab не резолвится внутри Pod агента, используйте `hostAliases` из [servercore_gitlab.md](servercore_gitlab.md).
 
 Агент также должен иметь исходящий доступ до GitLab/KAS по HTTP(S)/WebSocket. За корпоративным прокси или с SSL-инспекцией соединение может не подняться (см. «Известные проблемы» в [gitlab_in_kind.md](gitlab_in_kind.md)).
 
-### 0.1. Включить KAS в GitLab из `gitlab_in_kind` (только self-hosted)
+### 0.1. Включить KAS в GitLab из `gitlab_in_kind` (только self-hosted в kind; на Servercore пропустить)
 
 Нужны те же файлы и IP, что в `gitlab_in_kind.md` (Шаг 5–6). Если `/tmp/gitlab-kind-values.yaml` и `/tmp/gitlab-charts` уже удалены — воссоздайте их по тем шагам.
 
@@ -81,7 +91,7 @@
 
    Если Pod-ы в `Pending` — не хватает памяти: `gitlab_in_kind.md` рассчитан на 16 GiB, KAS добавляет ещё один Pod. Смотрите `kubectl -n gitlab describe pod <pod>`.
 
-### 0.2. Проверить, что агент достучится до KAS
+### 0.2. Проверить, что агент достучится до KAS (только kind без TLS; на Servercore пропустить)
 
 Агент ходит к KAS **изнутри Pod-а**, поэтому адрес должен резолвиться и открываться из кластера, а не только с вашего ноутбука:
 
@@ -108,6 +118,8 @@ ci_access:
 
 `ci_access` — это «белый список»: **только перечисленные проекты/группы** смогут использовать агента из CI. Без этого блока pipeline получит ошибку вида `no agents available` (точный текст зависит от версии).
 
+> Имя папки `.gitlab/agents/<имя>/` должно **в точности** совпадать с именем агента, которого вы выберете в UI на Шаге 2 (здесь `dtu-agent`). Иначе конфигурации нет, `ci_access` не действует и в job пустой kubeconfig.
+
 ```sh
 git add .gitlab/agents/dtu-agent/config.yaml
 git commit -m "feat: register dtu-agent"
@@ -131,7 +143,7 @@ helm search repo gitlab/gitlab-agent --versions | head -5
 export AGENT_CHART_VERSION=<версия-из-вывода>
 ```
 
-> **проверь:** версия агента не должна быть новее вашего KAS. Политику совместимости смотрите в документации GitLab Agent для вашей версии GitLab. На gitlab.com KAS обновляет GitLab; на self-hosted `9.11.7` версии KAS и агента могут расходиться.
+> Версия chart агента должна совпадать с minor-версией GitLab: колонка `APP VERSION` должна быть вашей minor (стенд: GitLab 19.5 -> chart `2.33.x`, агент `v19.5`). Агент новее сервера может не подключиться. На gitlab.com KAS обновляет GitLab; на self-hosted в kind (chart `9.11.7`, GitLab 18.11) берите chart агента с APP VERSION 18.11, **проверь** по `helm search`.
 
 Токен **не** передавайте в `--set` (попадёт в историю shell и `ps`). Сохраните его во временный файл и передайте через `--set-file`:
 
@@ -141,27 +153,29 @@ umask 077
 printf '%s' "$AGENT_TOKEN" > /tmp/agent-token
 unset AGENT_TOKEN
 
-export KAS_ADDRESS=<адрес-из-UI>   # например ws://kas.192.168.3.35.nip.io
+export KAS_ADDRESS=<адрес-из-UI>   # Servercore: wss://<gitlab-host>/-/kubernetes-agent/; kind без TLS: ws://kas.192.168.3.35.nip.io
 
 helm upgrade --install dtu-agent gitlab/gitlab-agent \
   --version "$AGENT_CHART_VERSION" \
-  --namespace gitlab-agent --create-namespace \
+  --namespace dtu-agent --create-namespace \
   --set-file config.token=/tmp/agent-token \
   --set config.kasAddress="$KAS_ADDRESS"
 
 rm -f /tmp/agent-token
 ```
 
-> **проверь:** имена ключей `config.token` и `config.kasAddress` по `helm show values gitlab/gitlab-agent --version "$AGENT_CHART_VERSION"`. Helm всё равно хранит значения релиза в Secret namespace `gitlab-agent`, поэтому токен виден тем, кто читает Secrets этого namespace.
+> **проверь:** имена ключей `config.token` и `config.kasAddress` по `helm show values gitlab/gitlab-agent --version "$AGENT_CHART_VERSION"`. Helm всё равно хранит значения релиза в Secret namespace `dtu-agent`, поэтому токен виден тем, кто читает Secrets этого namespace.
 
 Проверка:
 
 ```sh
-kubectl -n gitlab-agent get pods
+kubectl -n dtu-agent get pods
 # dtu-agent-gitlab-agent-...   1/1   Running
 ```
 
-В UI статус агента сменится на **Connected**. Если нет — смотрите логи: `kubectl -n gitlab-agent logs deploy/dtu-agent-gitlab-agent`.
+**Expect:** Pod `1/1 Running`, а в **Operate → Kubernetes clusters** статус агента `dtu-agent` сменился на **Connected**. Если нет — смотрите логи: `kubectl -n dtu-agent logs deploy/dtu-agent-gitlab-agent`.
+
+> **Права агента.** Chart по умолчанию создаёт ClusterRoleBinding на `cluster-admin`: любой pipeline проекта из `ci_access` получает полный доступ к кластеру. Для этой лабы допустимо. Лаба [полного цикла](gitlab_ci_lab_full_cycle.md) требует **отдельного** агента с ограниченным ServiceAccount (RBAC в одном namespace и lease-права в namespace агента); этого агента там не переиспользуйте. Здесь агент стоит в namespace `dtu-agent`, чтобы не пересекаться с `gitlab-agent` из full-cycle.
 
 > Токен агента — это секрет. Не коммитьте его и не вставляйте в чат; в UI он показывается один раз, при потере — создайте новый токен.
 
@@ -181,7 +195,7 @@ kubectl -n gitlab-agent get pods
 Выберите контекст одним из двух способов:
 
 ```yaml
-# вариант A: переменная + helm/kubectl флаг
+# вариант A: переменная + helm/kubectl флаг (не маскируйте KUBE_CONTEXT, если вынесете её в CI/CD variables: это не секрет, а значение с `:` и `/` не пройдёт masked)
 variables:
   KUBE_CONTEXT: mygroup/my-project:dtu-agent
 # ... helm upgrade --install ... --kube-context "$KUBE_CONTEXT"
@@ -203,7 +217,7 @@ script:
 Образ Helm — `alpine/helm:4.2.0` (Helm 4): флаг `--rollback-on-failure` есть в Helm 4. Тег вынесен в переменную `HELM_IMAGE_TAG`. Проверка версии образа:
 
 ```sh
-docker run --rm --entrypoint helm alpine/helm:4.2.0 version
+podman run --rm --entrypoint helm docker.io/alpine/helm:4.2.0 version   # на VM Podman; где есть Docker: docker run ...
 ```
 
 ```yaml
@@ -259,7 +273,9 @@ kubectl get deploy,pods -n staging
 helm list -A
 ```
 
-> **проверь:** утверждение «`alpine/helm` не содержит `kubectl`»: `docker run --rm --entrypoint sh alpine/helm:<тег> -c 'command -v kubectl'`. Если `kubectl` нужен (вариант B из Шага 3), используйте образ с `kubectl`; для Helm достаточно `--kube-context`.
+**Expect:** pipeline зелёный (`deploy:staging` выполнен, `deploy:prod` ждёт клика); в `staging` Pods `Running`; `helm list -A` показывает `app-staging`; **Operate → Environments** содержит `staging`.
+
+> **проверь:** утверждение «`alpine/helm` не содержит `kubectl`»: `podman run --rm --entrypoint sh docker.io/alpine/helm:<тег> -c 'command -v kubectl'`. Если `kubectl` нужен (вариант B из Шага 3), используйте образ с `kubectl`; для Helm достаточно `--kube-context`.
 
 ---
 
@@ -281,7 +297,7 @@ helm list -A
 1. **Сначала** запустите обычный деплой в `staging` (без `IMAGE_TAG`) и дождитесь **успешной** ревизии (`helm history app-staging -n staging`). Без здоровой предыдущей ревизии откатывать не на что: при самой первой установке с `--rollback-on-failure` Helm удаляет релиз (**проверь:** поведение вашей версии Helm). Эксперимент запускайте только после этого.
 2. Сломать образ нужно через переменную pipeline, а не правкой джобы: в **Build → Pipelines → Run pipeline** задайте `IMAGE_TAG=does-not-exist` (джоба передаёт `image.tag` только когда `IMAGE_TAG` задан).
 
-Ожидаемо:
+**Expect:**
 
 - джоба красная, `helm history app-staging -n staging` показывает неудачную ревизию и откат на предыдущую;
 - в кластере остаётся рабочая версия, Pods в `Running`.
@@ -333,7 +349,7 @@ notify:failure:
 | Направление соединения | Runner → API кластера (push) | agentk → KAS (исходящее из кластера) |
 | API кластера открыт наружу | Да, должен быть доступен runner-у | Нет |
 | Кто может использовать | Любой, кто запустит pipeline с доступом к переменной | Любой, кто запускает pipeline в проекте из `ci_access`: он деплоит с правами агента |
-| Права в кластере | Обычно `cluster-admin` из kubeconfig | По умолчанию права ServiceAccount агента (**проверь:** `kubectl get clusterrolebinding -o wide \| grep gitlab-agent`). Сузить через impersonation (`access_as` в `ci_access`) — функция **Premium** (**проверь тариф**, ключи — по документации вашей версии GitLab). На Free: ограничьте ServiceAccount агента вручную через RBAC (Role/RoleBinding только на нужные namespace; имя SA — `kubectl -n gitlab-agent get sa`, **проверь**) |
+| Права в кластере | Обычно `cluster-admin` из kubeconfig | По умолчанию `cluster-admin` (chart создаёт ClusterRoleBinding; убедитесь: `kubectl get clusterrolebinding -o wide \| grep gitlab-agent`). Сузить через impersonation (`access_as` в `ci_access`) — функция **Premium** (**проверь тариф**, ключи — по документации вашей версии GitLab). На Free: ограничьте ServiceAccount агента вручную через RBAC (Role/RoleBinding только на нужные namespace; имя SA — `kubectl -n dtu-agent get sa`, **проверь**) |
 | Ротация | Заменить переменную в каждом проекте | Новый токен агента |
 | Сложность старта | Минимальная | Нужен KAS и установка агента |
 
@@ -363,8 +379,8 @@ helm uninstall app-prod -n prod
 kubectl delete ns staging prod                      # только если namespace создан лабой
 
 # 2. Агент в кластере
-helm -n gitlab-agent uninstall dtu-agent
-kubectl delete ns gitlab-agent
+helm -n dtu-agent uninstall dtu-agent
+kubectl delete ns dtu-agent                          # namespace gitlab-agent из full-cycle не трогаем
 
 # 3. Временный файл с токеном (если остался)
 rm -f /tmp/agent-token

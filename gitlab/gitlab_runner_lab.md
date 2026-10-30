@@ -2,6 +2,8 @@
 
 Runner — отдельный бинарь, не часть GitLab-сервера. Он long-poll'ит Jobs API («есть джобы для меня?») и исполняет их в одном из executors. В этой лабе вы поднимаете два runner'а руками: **docker executor** на своей машине и **kubernetes executor** через Helm chart в kind — и доказываете, что job выполнился именно на них.
 
+На Servercore сначала пройдите [подготовку](servercore_gitlab.md). Встроенный group runner уже использует Kubernetes executor. Эта лаба создаёт дополнительные runner'ы с тегами `lab-docker` / `lab-k8s`; обычные untagged jobs может забрать встроенный group runner. Эксперимент с pending требует временно отключить его для проекта. Для Kubernetes-части используйте существующий kind-кластер VM и пропустите `kind create cluster --name runner-lab`; в cleanup не удаляйте кластер стенда.
+
 **Время:** 40–60 минут
 **Сложность:** ★★☆☆☆
 **Требует:** проект в GitLab (gitlab.com free или self-hosted из [`gitlab_in_kind.md`](gitlab_in_kind.md)), `docker` или `podman`, `kind`, `kubectl`, `helm`
@@ -11,6 +13,8 @@ Runner — отдельный бинарь, не часть GitLab-сервер�
 > **Ресурсы.** Шаг 5 создаёт второй kind-кластер. Если у тебя уже работает GitLab из `gitlab_in_kind.md` (ему нужно 16 GiB RAM), второй кластер рядом, скорее всего, не поместится. Либо используй gitlab.com, либо останови кластер с GitLab на время шага 5.
 >
 > **Встроенный runner.** GitLab из `gitlab_in_kind.md` уже содержит свой runner (instance-scoped, privileged). В списке runner'ов их будет два: встроенный и ваш. Job'ы с тегами `lab-docker` / `lab-k8s` встроенный runner не возьмёт, но untagged job'ы может забрать он. Смотри `$CI_RUNNER_DESCRIPTION` в логе.
+>
+> **Стенд Servercore.** GitLab: `https://<gitlab-host>` (доверенный сертификат, TLS не отключайте), git только по HTTPS. В вашей группе уже есть unprivileged group runner (kubernetes executor, теги `lab-1`/`lab-2` и `kubernetes`, untagged включён; точные теги смотрите в **Settings > CI/CD > Runners**). Docker daemon на VM нет (там Podman для kind), поэтому для шага 2 используйте Podman-вариант или пропустите его и сделайте шаг 5. Имя GitLab резолвится в приватный IP в job Pod'ах встроенного runner; в вашем новом kind-кластере и в docker executor этого может не быть (см. шаги 2 и 5).
 
 ---
 
@@ -38,8 +42,8 @@ Runner — отдельный бинарь, не часть GitLab-сервер�
 4. **Create runner** → скопируйте токен `glrt-...` (показывается один раз)
 
 ```bash
-export GITLAB_URL=https://gitlab.com            # или http://gitlab.<IP>.nip.io
-export RUNNER_TOKEN=glrt-xxxxxxxxxxxxxxxxxxxx
+export GITLAB_URL=https://gitlab.com            # self-hosted из gitlab_in_kind.md: http://gitlab.<IP>.nip.io; стенд Servercore: https://<gitlab-host>
+export RUNNER_TOKEN=glrt-xxxxxxxxxxxxxxxxxxxx   # не коммитьте и не вставляйте токен в командную строку register
 ```
 
 > Теги, `run untagged`, `locked` и `protected` задаются **при создании runner'а в UI**, а не флагами `register`. Это отличие нового flow от старого.
@@ -67,19 +71,21 @@ docker run -d --name gitlab-runner --restart always \
 >
 > `:latest` годится только для лабы. В реальной установке пинят версию runner'а, равную версии GitLab-сервера (major.minor).
 
-Регистрируем:
+Регистрируем. Токен не передаём флагом `--token`: он попал бы в список процессов и историю shell. Команда спросит его интерактивно, вставьте значение `$RUNNER_TOKEN` в приглашение (`echo "$RUNNER_TOKEN"` в соседнем терминале; ввод может отображаться на экране):
 
 ```bash
-docker exec gitlab-runner gitlab-runner register \
-  --non-interactive \
+docker exec -it gitlab-runner gitlab-runner register \
   --url "$GITLAB_URL" \
-  --token "$RUNNER_TOKEN" \
   --executor docker \
-  --docker-image alpine:latest \
+  --docker-image alpine:3.22 \
   --description "lab-docker-runner"
 ```
 
+> На стенде, если имя GitLab не резолвится из job-контейнеров, добавьте флаг `--docker-extra-hosts "<gitlab-host>:<приватный-IP>"` (проверьте имя флага через `docker exec gitlab-runner gitlab-runner register --help`).
+
 Проверяем в UI: **Settings → CI/CD → Runners** — runner со статусом **online** (зелёная точка).
+
+**Expect:** в `docker logs gitlab-runner` нет ошибок регистрации; `docker exec gitlab-runner cat /etc/gitlab-runner/config.toml` содержит блок `[[runners]]` с `executor = "docker"`; в UI runner `lab-docker-runner` online.
 
 ---
 
@@ -99,7 +105,7 @@ check_interval = 0
   token = "glrt-..."
   executor = "docker"
   [runners.docker]
-    image = "alpine:latest"
+    image = "alpine:3.22"
     privileged = false
     volumes = ["/cache"]
 ```
@@ -143,7 +149,7 @@ stages: [test]
 on-docker:
   stage: test
   tags: [lab-docker]
-  image: alpine:latest
+  image: alpine:3.22
   script:
     - echo "runner: $CI_RUNNER_DESCRIPTION  (id=$CI_RUNNER_ID)"
     - echo "tags: $CI_RUNNER_TAGS"
@@ -151,9 +157,11 @@ on-docker:
     - hostname
 ```
 
-Push → **CI/CD → Pipelines**. В логе job'а первые строки содержат `Running with gitlab-runner ... on lab-docker-runner`. `hostname` — ID контейнера, а не имя вашей машины.
+Push → **Build → Pipelines**. В логе job'а первые строки содержат `Running with gitlab-runner ... on lab-docker-runner`. `hostname` — ID контейнера, а не имя вашей машины.
 
-Эксперимент с тегами: сначала отключите **Enable instance runners for this project** (Settings → CI/CD → Runners). Иначе встроенный instance runner из `gitlab_in_kind.md` возьмёт untagged job, и `pending` не будет. Затем уберите `tags:` из job'а и запушьте. Job повиснет в `pending` с пометкой «stuck» (точный текст зависит от версии GitLab, проверь на своём) — ни один из ваших runner'ов не берёт untagged. После эксперимента включите instance runners обратно, если они нужны другим лабам.
+**Expect:** job `on-docker` зелёный; в логе `runner: lab-docker-runner`, `tags: lab-docker`, а `hostname` не совпадает с именем вашей VM.
+
+Эксперимент с тегами: сначала отключите **Enable instance runners for this project** (Settings → CI/CD → Runners), а на стенде Servercore ещё и **Enable group runners**. Иначе встроенный runner (instance runner из `gitlab_in_kind.md` или group runner стенда) возьмёт untagged job, и `pending` не будет. Затем уберите `tags:` из job'а и запушьте. Job повиснет в `pending` с пометкой «stuck» (точный текст зависит от версии GitLab, проверь на своём) — ни один из ваших runner'ов не берёт untagged. После эксперимента включите instance и group runners обратно, если они нужны другим лабам. **Expect:** untagged job остаётся в `pending`; после возврата `tags: [lab-docker]` и push он выполняется.
 
 ---
 
@@ -169,6 +177,7 @@ export RUNNER_TOKEN_K8S=glrt-xxxxxxxxxxxxxxxxxxxx   # не коммитьте т
 
 - gitlab.com: `https://gitlab.com`
 - self-hosted из `gitlab_in_kind.md`: тот же адрес `http://gitlab.<IP>.nip.io`, что и в той лабе, где `<IP>` — IP вашего хоста (не `127.0.0.1`)
+- стенд Servercore: `https://<gitlab-host>`. Если проверка ниже не резолвит имя, добавьте в values runner'а `hostAliases` с приватным IP GitLab (проверьте ключ через `helm show values gitlab/gitlab-runner`) и спросите IP у оператора
 
 Создайте кластер и проверьте доступность GitLab из него:
 
@@ -203,7 +212,7 @@ runners:
   config: |
     [[runners]]
       [runners.kubernetes]
-        image = "alpine:latest"
+        image = "alpine:3.22"
         namespace = "{{ default .Release.Namespace .Values.runners.jobNamespace }}"
         # Apple Silicon: раскомментируйте и возьмите helper той же версии, что и runner
         # helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:arm64-<APP_VERSION>"
@@ -223,20 +232,21 @@ helm show chart gitlab/gitlab-runner --version <ВЕРСИЯ_ИЗ_search> | grep
 
 ```bash
 umask 077
-printf '%s' "$RUNNER_TOKEN_K8S" > /tmp/runner-token
+RUNNER_TOKEN_FILE=$(mktemp)
+printf '%s' "$RUNNER_TOKEN_K8S" > "$RUNNER_TOKEN_FILE"
 helm upgrade --install gitlab-runner gitlab/gitlab-runner \
   --namespace gitlab-runner --create-namespace \
   --version <ВЕРСИЯ_ИЗ_search> \
   -f runner-values.yaml \
-  --set-file runnerToken=/tmp/runner-token
-rm -f /tmp/runner-token
+  --set-file runnerToken="$RUNNER_TOKEN_FILE"
+rm -f "$RUNNER_TOKEN_FILE"
 
 kubectl -n gitlab-runner get pods
 ```
 
 Runner-manager Pod должен стать `1/1 Running`, а в UI runner `lab-k8s` — online.
 
-> Свой `runners.config` **полностью заменяет** конфиг из chart, включая default `image` и `namespace`. Поэтому `image = "alpine:latest"` и строка `namespace` заданы явно.
+> Свой `runners.config` **полностью заменяет** конфиг из chart, включая default `image` и `namespace`. Поэтому `image = "alpine:3.22"` и строка `namespace` заданы явно.
 
 Добавьте job:
 
@@ -244,7 +254,7 @@ Runner-manager Pod должен стать `1/1 Running`, а в UI runner `lab-k
 on-k8s:
   stage: test
   tags: [lab-k8s]
-  image: alpine:latest
+  image: alpine:3.22
   script:
     - echo "runner: $CI_RUNNER_DESCRIPTION"
     - hostname      # имя Pod'а runner-...-project-...
@@ -257,6 +267,8 @@ kubectl -n gitlab-runner get pods -w
 ```
 
 Для каждого job'а появляется новый Pod `runner-<id>-project-<id>-concurrent-<n>`, который исчезает после завершения. Это и есть «Pod per job».
+
+**Expect:** job `on-k8s` зелёный; в `kubectl get pods -w` появился и исчез Pod `runner-...`; в логе `runner: ...` совпадает с описанием runner `lab-k8s`, `hostname` — имя этого Pod'а.
 
 ---
 
@@ -280,7 +292,7 @@ kubectl -n gitlab-runner get pods -w
 |---------|---------|---------|
 | Job висит `pending`, «stuck» | нет online runner'а с нужными `tags:` либо runner не берёт untagged | совпадение тегов или включить **Run untagged jobs** |
 | `ERROR: no image specified and no default image configured` | свой `config.toml`/`runners.config` затёр default `image` | задать `image` в `[runners.docker]` / `[runners.kubernetes]` или `image:` в каждом job |
-| `Cannot connect to the Docker daemon` в job с `docker build` | DinD не настроен | runner с `privileged = true` + `services: docker:dind`, либо монтировать сокет (небезопасно) |
+| `Cannot connect to the Docker daemon` в job с `docker build` | DinD не настроен | runner с `privileged = true` + `services: docker:dind`, либо монтировать сокет (небезопасно); без privileged (стенд Servercore) собирайте образы через buildah/kaniko |
 | Runner в kind (arm64) висит на `Pulling image` для helper | пытается скачать x86_64 helper | `helper_image = "...gitlab-runner-helper:arm64-<версия>"` в `[runners.kubernetes]` |
 | Runner online в UI, но job не стартует в kind-GitLab | Pod не резолвит `gitlab.<IP>.nip.io` или нет маршрута | проверить `kubectl -n gitlab-runner logs <pod>`; использовать адрес, достижимый из кластера |
 | `403 / invalid token` при `register` | старый registration token в новом flow (или наоборот) | создать runner в UI и использовать `glrt-...` токен |

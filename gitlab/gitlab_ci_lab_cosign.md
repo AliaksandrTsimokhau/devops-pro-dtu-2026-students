@@ -1,5 +1,7 @@
 # Lab: подпись и провенанс Docker-образов через Cosign в GitLab CI/CD
 
+> **Важно: эта лаба — демонстрация на gitlab.com и НЕ выполняется keyless на стенде Servercore.** Keyless-подпись использует публичный Sigstore (Fulcio + Rekor), а публичный Fulcio доверяет OIDC-токенам только `https://gitlab.com`. На self-hosted GitLab стенда `cosign sign` через публичный Sigstore не пройдёт. Лабу можно выполнить на gitlab.com, а на стенде — прочитать как разбор механики. Кроме того, шаги с `docker:27-dind` на стенде требуют privileged-раннера, который оператор включает на вашей VM по отдельной просьбе.
+
 В этой лабе вы научите свой GitLab pipeline **подписывать собранные Docker-образы** и **аннотировать их метаданными билда** через [Cosign](https://github.com/sigstore/cosign) — без управления приватными ключами. Подпись происходит **keyless**: GitLab выпускает короткоживущий OIDC-токен, Sigstore Fulcio превращает его в сертификат, Rekor публикует факт подписи в неподделываемом transparency log.
 
 Опираемся на статью: [Annotate container images with build provenance using Cosign in GitLab CI/CD](https://about.gitlab.com/blog/annotate-container-images-with-build-provenance-using-cosign-in-gitlab-ci-cd/).
@@ -23,9 +25,10 @@
 
 ## Prerequisites
 
-- Аккаунт на **gitlab.com** (для `id_tokens` с OIDC; см. note ниже про self-hosted).
+- Аккаунт на **gitlab.com** (для `id_tokens` с OIDC; на self-hosted стенде keyless не работает, см. баннер выше и note ниже).
 - Включённый Container Registry в проекте (Settings → General → Visibility → Container registry).
-- Доступный shared runner (Docker-in-Docker поддерживается).
+- Доступный runner с поддержкой Docker-in-Docker (privileged). На gitlab.com подойдут shared runners; на стенде privileged включает оператор, теги раннера смотрите в Settings > CI/CD > Runners.
+- Исходящий доступ раннера к публичным `fulcio.sigstore.dev` и `rekor.sigstore.dev`. Учтите: запись в Rekor **публична** — в ней виден путь вашего проекта и ветка.
 - Локально установленные:
   - `git`
   - `docker` (для опционального verify-step),
@@ -83,14 +86,16 @@
 Клонируем и создаём простое приложение:
 
 ```bash
-git clone https://gitlab.example.com/<your-namespace>/cosign-signed-images-lab.git
+git clone https://<gitlab-host>/<your-namespace>/cosign-signed-images-lab.git
 cd cosign-signed-images-lab
 ```
+
+> Git работает только по HTTPS (SSH закрыт). Вместо пароля используйте personal access token (Edit profile > Access tokens, scope `write_repository`).
 
 **`Dockerfile`:**
 
 ```dockerfile
-FROM alpine:3.20
+FROM alpine:3.22
 
 LABEL maintainer="devops-lab"
 LABEL description="Demo image for cosign provenance lab"
@@ -103,7 +108,7 @@ RUN chmod +x /usr/local/bin/hello
 ENTRYPOINT ["/usr/local/bin/hello"]
 ```
 
-> `alpine:3.20`: `проверь поддерживаемую версию` на https://alpinelinux.org/releases/. Если ветка уже EOL, возьмите актуальную stable-ветку и поправьте тег здесь.
+> `alpine:3.22` совпадает с образом по умолчанию у раннеров стенда. Актуальные ветки: https://alpinelinux.org/releases/.
 
 **`hello.sh`:**
 
@@ -128,9 +133,14 @@ stages:
 build_and_sign:
   stage: build
   image: docker:27
+  tags: [lab-1, kubernetes]   # свои теги смотрите в Settings > CI/CD > Runners
   services:
     - name: docker:27-dind
+      entrypoint: ["env", "-u", "DOCKER_HOST"]
+      command: ["dockerd-entrypoint.sh"]
   variables:
+    DOCKER_HOST: tcp://docker:2375/
+    DOCKER_TLS_CERTDIR: ""
     IMAGE_TAG: $CI_COMMIT_SHORT_SHA
     IMAGE_URI: $CI_REGISTRY_IMAGE:$IMAGE_TAG
     COSIGN_YES: "true"
@@ -140,7 +150,7 @@ build_and_sign:
       aud: sigstore
   before_script:
     - apk add --no-cache cosign jq
-    - docker login -u "gitlab-ci-token" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
+    - echo "$CI_JOB_TOKEN" | docker login -u "gitlab-ci-token" --password-stdin "$CI_REGISTRY"
   script:
     - docker build --pull -t "$IMAGE_URI" .
     - docker push "$IMAGE_URI"
@@ -169,7 +179,7 @@ build_and_sign:
 ### Разбор по строкам
 
 **`image: docker:27` + `services: docker:27-dind`**
-Классическая связка Docker-in-Docker. Без неё мы не сможем выполнять `docker build/push` внутри job. Тег закреплён (как в лабе trivy), а не `latest`, чтобы pipeline не менялся без изменений в коде.
+Классическая связка Docker-in-Docker. Без неё мы не сможем выполнять `docker build/push` внутри job. Тег закреплён (как в лабе trivy), а не `latest`, чтобы pipeline не менялся без изменений в коде. Блок `variables` с `DOCKER_HOST`/`DOCKER_TLS_CERTDIR` и форма `services` с `entrypoint`/`command` те же, что в лабе trivy: без них `docker build` не найдёт демон. Для dind нужен privileged-раннер (см. Prerequisites).
 
 **`COSIGN_YES: "true"`**
 Cosign по умолчанию интерактивно подтверждает publish в Rekor. В CI это блокирует pipeline. `COSIGN_YES=true` — non-interactive.
@@ -181,12 +191,12 @@ GitLab feature flag — каждая команда `script:` сворачива
 Это и есть OIDC-магия. GitLab генерирует JWT с audience `sigstore` и кладёт его в переменную `SIGSTORE_ID_TOKEN`. Cosign автоматически читает её именно из этой переменной.
 
 **`apk add --no-cache cosign jq`**
-`cosign` ставится из Alpine-репозитория образа. `проверь: apk info cosign` (или `apk search cosign`) в `docker:27`, какая версия пакета доступна. `jq` нужен для красивого вывода verify-результата.
+`cosign` ставится из Alpine-репозитория образа без закреплённой версии, поэтому у разных студентов она может отличаться. Какая версия доступна, смотрите командой `apk policy cosign` в job-е (добавьте её перед `apk add`) и запишите её в README проекта. `jq` нужен для красивого вывода verify-результата.
 
-> `проверь` версию cosign. В cosign v3 формат bundle и раскладка подписей в registry могут отличаться от описанных здесь (например, `sha256-…sig`-теги). Зафиксируйте версию пакета (`apk add cosign=<версия>`, `проверь` точное имя пакета и версии) и сверьте флаги с `cosign sign --help` и `cosign verify --help`.
+> Версию cosign стоит зафиксировать. В cosign v3 формат bundle и раскладка подписей в registry могут отличаться от описанных здесь (например, `sha256-…sig`-теги). Зафиксируйте версию пакета (`apk add cosign=<версия>`, точную версию возьмите из `apk policy cosign`) и сверьте флаги с `cosign sign --help` и `cosign verify --help`.
 
-**`docker login -u "gitlab-ci-token" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"`**
-Авторизация в GitLab Container Registry через автогенерируемый `CI_JOB_TOKEN`. Никаких manual credentials.
+**`echo "$CI_JOB_TOKEN" | docker login -u "gitlab-ci-token" --password-stdin "$CI_REGISTRY"`**
+Авторизация (токен передаётся через stdin, а не в аргументах команды) в GitLab Container Registry через автогенерируемый `CI_JOB_TOKEN`. Никаких manual credentials.
 
 **`IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_URI")`**
 Cosign подписывает **digest**, а не **tag**. Tag — изменяемая ссылка, digest — content-addressed (`sha256:...`). Подпись по digest гарантирует, что подменить контент незаметно невозможно.
@@ -196,6 +206,8 @@ Cosign подписывает **digest**, а не **tag**. Tag — изменя�
 
 **`cosign verify --certificate-identity ... --certificate-oidc-issuer ...`**
 Проверка: подпись валидна **И** identity сертификата матчит ваш `.gitlab-ci.yml` на указанной ветке у указанного issuer. То есть подписать мог **только** этот pipeline в этом проекте.
+
+> Строка identity точная и зависит от того, откуда подписывает pipeline: если подпись делается из подключённого файла (`include:` или CI/CD Component), Subject содержит путь этого файла, а не `.gitlab-ci.yml`. Чтобы не зависеть от ветки, используйте `--certificate-identity-regexp "^$CI_PROJECT_URL//\.gitlab-ci\.yml@refs/heads/.*$"` вместо `--certificate-identity`. Для production лучше строгое совпадение с конкретной веткой или тегом.
 
 ---
 
@@ -305,7 +317,7 @@ cosign verify \
 
 ## Шаг 7. Расширение — подпись с tag-mutation guard
 
-Сейчас в pipeline есть проблема: если кто-то перезапустит pipeline для того же `$CI_COMMIT_SHA` — подпись перезапишется. Это не катастрофа, но для production лучше явный guard.
+Сейчас в pipeline есть проблема: если кто-то перезапустит pipeline для того же `$CI_COMMIT_SHA`, cosign **добавит ещё одну подпись** к тому же digest (подписи накапливаются, а не перезаписываются), и в registry и Rekor появятся дубликаты. Это не катастрофа, но для production лучше явный guard. Guard срабатывает, только если digest не изменился (повторная сборка того же тега даёт новый digest, и подпись будет новой).
 
 Добавьте в `script:` перед `cosign sign`:
 
@@ -320,7 +332,7 @@ cosign verify \
       fi
 ```
 
-> Проверка идёт через `cosign verify` с той же identity, что и в шаге verify: если валидная подпись уже есть, повторно подписывать не нужно. `проверь` на вашей версии cosign: вывод `cosign tree` (показывает signatures, attestations, SBOMs) может не содержать строки `Signatures:`, поэтому grep по нему не использовать. Также `проверь`, что `exit 0` здесь завершает job без ошибки, как вы и хотите.
+> Проверка идёт через `cosign verify` с той же identity, что и в шаге verify: если валидная подпись уже есть, повторно подписывать не нужно. Проверьте на вашей версии cosign: вывод `cosign tree` (показывает signatures, attestations, SBOMs) может не содержать строки `Signatures:`, поэтому grep по нему не использовать. Также учтите, что `exit 0` завершает весь `script:` job-а: всё, что стоит после guard, при повторном запуске не выполнится.
 
 ---
 
@@ -334,10 +346,15 @@ cosign verify \
 attach_sbom:
   stage: build
   image: docker:27
+  tags: [lab-1, kubernetes]   # свои теги смотрите в Settings > CI/CD > Runners
   services:
     - name: docker:27-dind
+      entrypoint: ["env", "-u", "DOCKER_HOST"]
+      command: ["dockerd-entrypoint.sh"]
   needs: ["build_and_sign"]
   variables:
+    DOCKER_HOST: tcp://docker:2375/
+    DOCKER_TLS_CERTDIR: ""
     IMAGE_TAG: $CI_COMMIT_SHORT_SHA
     IMAGE_URI: $CI_REGISTRY_IMAGE:$IMAGE_TAG
     COSIGN_YES: "true"
@@ -346,7 +363,7 @@ attach_sbom:
       aud: sigstore
   before_script:
     - apk add --no-cache cosign syft jq
-    - docker login -u "gitlab-ci-token" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
+    - echo "$CI_JOB_TOKEN" | docker login -u "gitlab-ci-token" --password-stdin "$CI_REGISTRY"
   script:
     - IMAGE_DIGEST=$(docker pull "$IMAGE_URI" >/dev/null && docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_URI")
     - syft "$IMAGE_DIGEST" -o cyclonedx-json > sbom.json
@@ -362,7 +379,7 @@ attach_sbom:
     expire_in: 30 days
 ```
 
-> `syft` — генератор SBOM от Anchore. `проверь`, что пакет `syft` есть в Alpine-репозитории образа `docker:27` (`apk info syft`), иначе используйте [official binary](https://github.com/anchore/syft). Флаги `cosign attest --help` и `cosign verify-attestation --help` тоже `проверь` для вашей версии cosign (в v3 `--type` и формат predicate могут отличаться).
+> `syft` — генератор SBOM от Anchore. Пакет `syft` может отсутствовать в Alpine-репозитории образа `docker:27` (проверьте `apk policy syft`); тогда `apk add` упадёт, и установите syft по инструкции из [official repo](https://github.com/anchore/syft) с закреплённой версией. Флаги `cosign attest --help` и `cosign verify-attestation --help` сверьте с вашей версией cosign (в v3 `--type` и формат predicate могут отличаться).
 
 ---
 
@@ -370,7 +387,7 @@ attach_sbom:
 
 - [ ] Pipeline `build_and_sign` зелёный.
 - [ ] В Container Registry лежит ваш образ.
-- [ ] Рядом с образом видна подпись (в старых версиях cosign это теги `sha256-...sig`; `проверь` для вашей версии через `cosign tree <digest>`).
+- [ ] Рядом с образом видна подпись (в старых версиях cosign это теги `sha256-...sig`; сверьте для вашей версии через `cosign tree <digest>`).
 - [ ] `cosign verify` локально проходит с правильным identity.
 - [ ] `cosign verify` падает с неправильным issuer/branch/tag.
 - [ ] В выводе verify видны ваши аннотации (`com.gitlab.ci.pipeline.id`, и т.д.).

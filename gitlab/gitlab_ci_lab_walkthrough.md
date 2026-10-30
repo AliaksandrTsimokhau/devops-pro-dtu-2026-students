@@ -19,9 +19,9 @@
 
 ## Prerequisites
 
-- Аккаунт в GitLab (gitlab.com или self-hosted).
+- Аккаунт на GitLab стенда.
 - Установленный `git` локально.
-- Включённый runner в проекте (Shared runners на gitlab.com — из коробки).
+- Runner в проекте. На стенде это ваш runner с тегами `lab-1` или `lab-2` и `kubernetes` (точные теги проверьте в **Settings > CI/CD > Runners**; Kubernetes executor без привилегий, Docker daemon в jobs нет). Если job висит в `pending`, добавьте в начало `.gitlab-ci.yml` блок `default:` с `tags: [lab-1, kubernetes]` (подставьте свои теги) или включите **Run untagged jobs** у runner'а.
 - 30–45 минут.
 
 ---
@@ -37,7 +37,7 @@
 Клонируйте локально:
 
 ```bash
-git clone https://gitlab.example.com/<your-namespace>/gitlab-ci-walkthrough.git
+git clone https://<gitlab-host>/<your-namespace>/gitlab-ci-walkthrough.git
 cd gitlab-ci-walkthrough
 ```
 
@@ -62,13 +62,13 @@ git push origin main
 ```
 
 **Что происходит:**
-- GitLab Runner поднимает контейнер (по умолчанию `ruby:3.1`).
+- GitLab Runner поднимает pod с образом по умолчанию (на стенде — `alpine:3.22`).
 - `before_script` создаёт два файла; `script` проверяет их содержимое через `grep`.
 - exit code 0 → ✅ ; non-zero → ❌
 
 **Проверьте в UI:** Build → Pipelines → нажмите на job `test` → просмотрите лог. Вы увидите каждую команду и `Job succeeded`.
 
-> **Эксперимент:** измените `world` на `World` в `.gitlab-ci.yml` — grep завершится с кодом 1, job упадёт. Верните обратно.
+> **Эксперимент:** в строке `script:` замените `'Hello world'` на `'Hello World'` — grep завершится с кодом 1, job упадёт. Верните обратно.
 
 ---
 
@@ -105,7 +105,7 @@ git push origin main
 
 **Проверьте:** на странице job'а `package` появится кнопка **Download artifacts**. Нажмите — скачается `packaged.gz`.
 
-> **Проблема:** `test` и `package` используют одни файлы, но `file1.txt` / `file2.txt` создаются только в `test`, а в `package` их нет. Поэтому здесь `before_script` приходится дублировать в обоих jobs (`package` без него упадёт). Это мотивация для шага 4.
+> **Проблема:** каждый job запускается в чистом контейнере и не видит файлов соседа, поэтому `before_script` приходится дублировать в обоих jobs (`package` без него упадёт). Это мотивация для шага 4.
 
 ---
 
@@ -153,7 +153,7 @@ git push origin main
 Выносим создание файлов в отдельный `compile` stage. `test` и `package` наследуют artifact:
 
 ```yaml
-image: alpine
+image: alpine:3.22
 
 stages:
   - compile
@@ -192,7 +192,7 @@ git push origin main
 **Что изменилось:**
 - `compile` создаёт `compiled.txt` и сохраняет как artifact.
 - `test` и `package` автоматически получают `compiled.txt` из предыдущего stage — не нужно ничего настраивать.
-- `image: alpine` — лёгкий образ вместо `ruby:3.1` (~900 МБ).
+- `image: alpine:3.22` — лёгкий образ; на стенде он и так используется по умолчанию, но явное указание делает конфиг независимым от настроек runner'а.
 
 **Проверьте:** на странице job'а `test` в секции **Job artifacts** видно, что был скачан артефакт из `compile`.
 
@@ -203,7 +203,7 @@ git push origin main
 Добавьте второй формат упаковки. Оба job'а запускаются **одновременно**:
 
 ```yaml
-image: alpine
+image: alpine:3.22
 
 stages:
   - compile
@@ -248,6 +248,8 @@ git commit -m "step 5: parallel pack-gz and pack-iso jobs"
 git push origin main
 ```
 
+> Если в job `pack-iso` не найден `mkisofs`, замените команду на `xorrisofs -o ./packaged.iso ./compiled.txt` (какая из команд есть, зависит от пакета `xorriso`). `apk add` требует доступа job'а к зеркалам Alpine.
+
 **Что изменилось:** в stage `package` теперь два job'а. В UI они запускаются одновременно. Общее время stage = max(pack-gz, pack-iso), а не сумма.
 
 **Проверьте:** в UI pipeline — stage `package` содержит оба job'а рядом. Посмотрите их длительность.
@@ -256,10 +258,10 @@ git push origin main
 
 ## Шаг 6 — DAG через `needs`
 
-Добавьте `needs: [compile, test]` к обоим pack-* jobs. Оба нужны: `compile` даёт `compiled.txt` (artifacts берутся только из перечисленных в `needs` jobs, без `needs: ["test"]` артефакты `compile` не придут), а `test` задаёт порядок. Теперь они стартуют сразу после своих зависимостей, не ожидая завершения всего stage `test`:
+Добавьте `needs: [compile, test]` к обоим pack-* jobs. Оба нужны: `compile` даёт `compiled.txt` (artifacts берутся только из перечисленных в `needs` jobs, без `compile` в `needs` артефакт не придёт), а `test` задаёт порядок. Чтобы разницу было видно, добавьте ещё медленный job `e2e` в stage `test`. Теперь `pack-*` стартуют сразу после `compile` и `test`, не ожидая завершения всего stage `test` (то есть `e2e`):
 
 ```yaml
-image: alpine
+image: alpine:3.22
 
 stages:
   - compile
@@ -280,6 +282,10 @@ compile:
 test:
   stage: test
   script: cat compiled.txt | grep -q 'Hello world'
+
+e2e:
+  stage: test
+  script: sleep 60
 
 pack-gz:
   stage: package
@@ -306,15 +312,15 @@ git commit -m "step 6: DAG with needs, out-of-order execution"
 git push origin main
 ```
 
-**Что изменилось:** `needs` создаёт явную зависимость. Если в `test` stage было несколько jobs (например, медленный e2e), `pack-gz` и `pack-iso` больше не ждут всех — стартуют как только нужный им `test` завершился.
+**Что изменилось:** `needs` создаёт явную зависимость. `pack-gz` и `pack-iso` больше не ждут весь stage `test` (в том числе медленный `e2e`) — стартуют, как только завершились `compile` и `test`.
 
-**Проверьте:** в UI pipeline нажмите кнопку **Show dependencies** (иконка графа) — увидите DAG с рёбрами между jobs.
+**Проверьте:** `pack-gz` и `pack-iso` стартуют, пока `e2e` ещё выполняется (на шаге 5 они бы ждали его). В UI pipeline включите **Show dependencies** — увидите DAG с рёбрами между jobs.
 
 ---
 
 ## Шаг 7 — эксперимент: сломать pipeline намеренно
 
-Убедитесь, что stage-барьер работает — если `test` упадёт, `pack-*` не запустятся:
+Убедитесь, что зависимость `needs` работает — если `test` упадёт, `pack-*` не запустятся:
 
 ```bash
 # Сломайте test job намеренно

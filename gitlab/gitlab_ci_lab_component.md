@@ -18,13 +18,13 @@
 
 ## Prerequisites
 
-- Аккаунт в GitLab (gitlab.com или self-hosted).
+- Аккаунт на GitLab стенда (GitLab 19.x, CI/CD components поддерживаются).
 - Базовое знание Python (по сути нужен только `argparse`).
 - Работающее представление о `.gitlab-ci.yml`, stages, jobs, include.
 - Установленный `git` локально.
 - 30–45 минут.
 
-> Перед началом проверьте, что GitLab Runner доступен для вашего проекта: Settings → CI/CD → Runners → должен быть хотя бы один enabled runner. На gitlab.com — Shared runners включены по умолчанию.
+> Перед началом проверьте, что runner доступен проекту: **Settings > CI/CD > Runners**. На стенде это ваш runner с тегами `lab-1` или `lab-2` и `kubernetes` (точные теги смотрите там же; Kubernetes executor без привилегий, образ по умолчанию `alpine:3.22`). Job без `tags:` может зависнуть в `pending`, поэтому в `.gitlab-ci.yml` ниже добавлен блок `default: tags:`; подставьте свои теги или уберите блок, если runner берёт untagged jobs.
 
 ---
 
@@ -32,14 +32,14 @@
 
 1. В GitLab нажмите **New project → Create blank project**.
 2. Имя: `gitlab-python-cicd-component`.
-3. Visibility: `Private` (компонент будет доступен консьюмерам из той же группы/инстанса; для Public и публикации в Catalog нужна отдельная настройка, см. Шаг 6).
+3. Visibility: `Internal` (проект-потребитель в этом же инстансе сможет подключить компонент; при `Private` потребителю нужен доступ на чтение, см. шаг 7. Публикация в Catalog — необязательна, см. шаг 6).
 4. Отметьте **Initialize repository with a README**.
 5. Нажмите **Create project**.
 
 Клонируйте репозиторий локально:
 
 ```bash
-git clone https://gitlab.example.com/<your-namespace>/gitlab-python-cicd-component.git
+git clone https://<gitlab-host>/<your-namespace>/gitlab-python-cicd-component.git
 cd gitlab-python-cicd-component
 ```
 
@@ -95,7 +95,7 @@ print("You have chosen " + stage + " as the stage to run this job")
 print("Thank you " + persons_name + "! you are SUCCESSFULLY using GitLab CI with a Python script.")
 ```
 
-Скрипт принимает три аргумента и просто выводит их. В реальном компоненте здесь была бы полезная нагрузка: линтер, сканер, генератор отчёта.
+Скрипт принимает три аргумента и просто выводит их. В реальном компоненте здесь была бы полезная нагрузка: линтер, сканер, генератор отчёта. Файл `src/script.py` нужен только для локальной проверки: в компонент тот же код встраивается inline (шаг 4).
 
 Заполните `src/requirements.txt`:
 
@@ -180,6 +180,9 @@ component:
 stages:
   - test
 
+default:
+  tags: [lab-1, kubernetes]   # ваши теги runner'а; уберите блок, если runner берёт untagged jobs
+
 include:
   - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/template@$CI_COMMIT_SHA
     inputs:
@@ -190,7 +193,7 @@ include:
 
 Здесь компонент включает сам себя из текущего коммита через предопределённые переменные:
 
-- **`$CI_SERVER_FQDN`** — хост GitLab (например, `gitlab.com`).
+- **`$CI_SERVER_FQDN`** — FQDN вашего GitLab (хост стенда).
 - **`$CI_PROJECT_PATH`** — `namespace/project-name`.
 - **`@$CI_COMMIT_SHA`** — точная версия (текущий commit), не зависит от tag/branch.
 
@@ -223,7 +226,7 @@ git push origin v1.0.0
 > - `v1.1.0` — новые входные параметры (обратно совместимо),
 > - `v2.0.0` — breaking changes.
 
-(Дополнительно) Опубликуйте в **CI/CD Catalog**: Settings → General → Project visibility → нужны Public visibility, отмеченный чекбокс CI/CD Catalog Resource и подходящий README.
+(Необязательно) Публикация в **CI/CD Catalog**: **Settings > General > Visibility, project features, permissions** → включите **CI/CD Catalog resource** (нужен также README с описанием). Версия появляется в каталоге только после создания **Release** для тега; одного тега достаточно лишь для `@v1.0.0` в `include`. Если на вашем инстансе Catalog не нужен, этот шаг пропустите.
 
 ---
 
@@ -238,7 +241,7 @@ git push origin v1.0.0
 Клонируем:
 
 ```bash
-git clone https://gitlab.example.com/<your-namespace>/gitlab-python-cicd-component-consumer.git
+git clone https://<gitlab-host>/<your-namespace>/gitlab-python-cicd-component-consumer.git
 cd gitlab-python-cicd-component-consumer
 ```
 
@@ -249,6 +252,9 @@ stages:
   - build
   - test
   - deploy
+
+default:
+  tags: [lab-1, kubernetes]   # ваши теги runner'а; уберите блок, если runner берёт untagged jobs
 
 include:
   - component: $CI_SERVER_FQDN/<your-namespace>/gitlab-python-cicd-component/template@v1.0.0
@@ -270,7 +276,7 @@ git push origin main
 
 Откройте **Build → Pipelines** — pipeline должен содержать тот же job `component` (но уже в проекте-потребителе) с приветствием для Aliaksandr.
 
-> Важно: для приватного проекта-компонента потребитель должен иметь доступ на чтение к проекту-источнику. Если его нет, include упадёт с ошибкой доступа. Возможное решение — **Settings → CI/CD → Token Access** в проекте-источнике (**проверь**: в вашей версии GitLab Token Access может работать иначе или быть ограничен для компонентов; проверьте раздел документации «CI/CD components» для вашей версии). Самый простой путь в лабе — добавить проект-потребитель в группу с доступом к компоненту.
+> Важно: при `include: component:` доступ проверяется для пользователя, запускающего pipeline: у него должно быть право чтения проекта-компонента, иначе include упадёт с ошибкой доступа. Поэтому в шаге 1 проект компонента сделан `Internal`; для `Private` добавьте пользователя в проект или положите оба проекта в одну группу.
 
 ---
 
@@ -339,7 +345,7 @@ include:
 
 Создайте **Personal Access Token**:
 
-1. **User Settings → Access Tokens**.
+1. Аватар > **Edit profile > Access tokens**.
 2. Name: `gitlab-component-pat`.
 3. Scopes: `read_api`.
 4. Скопируйте сгенерированный токен.
@@ -349,8 +355,8 @@ include:
 1. **Settings → CI/CD → Variables → Add variable**.
 2. Key: `GLPAT`.
 3. Value: вставьте токен.
-4. Type: **Variable** (или **Masked** для скрытия в логах).
-5. Protected: чекбокс снят, чтобы вариант был доступен на любой ветке.
+4. Type: **Variable**, Visibility: **Masked** (значение скрыто в логах; токен `glpat-…` под правила маскирования подходит).
+5. Protected: чекбокс снят, чтобы переменная была доступна на любой ветке (в лабе ветки не защищены).
 
 Поднимите версию компонента (`v1.1.0`), обновите ссылку в потребителе на `@v1.1.0`. После запуска pipeline вы увидите список проектов в логе.
 

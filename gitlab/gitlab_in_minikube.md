@@ -4,17 +4,16 @@ _Source: [GitLab Helm Charts - Minikube Guide](https://docs.gitlab.com/charts/de
 
 This guide helps you set up a local Kubernetes development environment using Minikube.
 
+> **Optional alternative.** The Servercore stand already gives you GitLab CE with trusted Let's Encrypt HTTPS, a registry on port 5050, an unprivileged Kubernetes runner and a kind cluster on your VM. You do **not** need this lab for the other labs. Do it only if you want your own GitLab on your laptop. It needs about 4 CPU and 10 GB RAM free.
+
 ---
 
 ## Prerequisites
 
-- **kubectl**: Install via [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) or your OS package manager.
-    ```sh
-    sudo gcloud components install kubectl
-    sudo gcloud components update
-    ```
+- **kubectl**: install with your OS package manager (for example `brew install kubectl`) or via the [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud components install kubectl`).
+- **helm** v3: for example `brew install helm`. It is used for GitLab and for the runner below.
 - **minikube**: Download from the [official releases](https://github.com/kubernetes/minikube/releases).
-- **VirtualBox** (recommended). Other drivers: VMware Fusion, HyperV, KVM, Xhyve.
+- A driver: **Docker** (`--driver=docker`) works on macOS, including Apple Silicon, and on Linux. VirtualBox is not available on Apple Silicon. Other drivers: VMware Fusion, HyperV, KVM.
 
 ---
 
@@ -28,8 +27,10 @@ GitLab requires more resources than Minikube's defaults:
 
 Start Minikube:
 ```sh
-minikube start --cpus 4 --memory 10240
+minikube start --driver=docker --cpus 4 --memory 10240
 ```
+
+> With the Docker driver on macOS the minikube IP is usually not reachable from the host, so `https://gitlab.<minikube-ip>.nip.io` may not open. In that case use `minikube tunnel`, or the VirtualBox/other VM driver on Intel. **Verify** on your machine with `curl -k https://gitlab.$(minikube ip).nip.io` after the install. The values below assume the default VirtualBox IP `192.168.99.100` unless you override it.
 
 Get the cluster IP:
 ```sh
@@ -113,6 +114,8 @@ The example uses `nip.io` for dynamic DNS. If unavailable, add entries to `/etc/
 
 If using self-signed certs, fetch the CA certificate after deployment and add it to your system trust store. See [BounCA's tutorial](https://www.bounca.org/tutorials/install_root_certificate.html) for details.
 
+> The runner pods will not trust this CA either, so a job may fail with `x509: certificate signed by unknown authority` when it contacts GitLab. The runner chart accepts a Kubernetes secret with the CA via `certsSecretName` (secret key `<hostname>.crt`). **Verify** the exact secret and key names in the GitLab Runner chart documentation for your version before relying on this.
+
 ---
 
 ## Accessing GitLab
@@ -151,11 +154,17 @@ This will generate an authentication token (`glrt-...`, показывается
      ```yaml
      rbac:
        create: true
-     runners:
-        privileged: true
      gitlabUrl: https://gitlab.<minikube-ip>.nip.io
      runnerToken: "glrt-xxxxx"
+     runners:
+       config: |
+         [[runners]]
+           [runners.kubernetes]
+             namespace = "gitlab-runner"
+             image = "alpine:3.22"
+             privileged = false
      ```
+     The runner is **unprivileged**, like the stand's. Do not set `privileged: true`: it gives job pods root on the node. Your own `runners.config` replaces the chart default, so the default `image` must be set here, otherwise jobs without `image:` fail with "no image specified".
    - Set `runnerToken` to the authentication token (`glrt-...`) from your GitLab UI. Не храните этот файл в git: токен в нём виден тем, кто читает файл.
 
 2. **Add the GitLab Helm repository:**
@@ -172,9 +181,9 @@ This will generate an authentication token (`glrt-...`, показывается
 4. **Install GitLab Runner:**
     - For Helm 3:
       ```sh
-      helm install --namespace gitlabrunner --create-namespace gitlab-runner -f <CONFIG_VALUES_FILE> gitlab/gitlab-runner
+      helm install --namespace gitlab-runner --create-namespace gitlab-runner -f <CONFIG_VALUES_FILE> gitlab/gitlab-runner
       ```
-    - Replace `<NAMESPACE>` with your Kubernetes namespace and `<CONFIG_VALUES_FILE>` with your `values.yaml` path.
+    - Replace `<CONFIG_VALUES_FILE>` with your `values.yaml` path. The namespace is `gitlab-runner` and the release name is `gitlab-runner`.
 
     ### Verifying Your GitLab Runner Installation
 
@@ -182,36 +191,54 @@ This will generate an authentication token (`glrt-...`, показывается
 
     1. **Check the Helm release:**
         ```sh
-        helm --namespace gitlabrunner get all gitlab-runner
+        helm --namespace gitlab-runner get all gitlab-runner
         ```
 
     2. **List all resources in the namespace:**
         ```sh
-        kubectl -n gitlabrunner get all
+        kubectl -n gitlab-runner get all
         ```
 
     3. **View logs for the GitLab Runner Pod:**
         ```sh
-        kubectl -n gitlabrunner logs -f pod/<gitlab-runner-pod-name>
+        kubectl -n gitlab-runner logs -f pod/<gitlab-runner-pod-name>
         ```
         Replace `<gitlab-runner-pod-name>` with the actual pod name from the previous command.
 
     4. **Verify the runner is registered in GitLab:**
         - Go to your GitLab project.
         - Navigate to **Settings > CI/CD > Runners**.
-        - Confirm that your new runner appears in the list.
+        - Confirm that your new runner appears in the list with a green (online) status.
+
+    5. **Run a test pipeline.** Add this `.gitlab-ci.yml` to the project and push:
+        ```yaml
+        test:
+          image: alpine:3.22
+          script:
+            - echo "hello from minikube runner"
+        ```
+        **Expect:** the pipeline (**Build > Pipelines**) turns green, and a job pod appears briefly in `kubectl -n gitlab-runner get pods`.
 
     ---
 
 5. **Upgrade GitLab Runner:**
     ```sh
-    helm upgrade --namespace gitlabrunner -f <CONFIG_VALUES_FILE> <RELEASE-NAME> gitlab/gitlab-runner
+    helm upgrade --namespace gitlab-runner -f <CONFIG_VALUES_FILE> gitlab-runner gitlab/gitlab-runner
     ```
     - Add `--version <RUNNER_HELM_CHART_VERSION>` to specify a version.
 
 6. **Uninstall GitLab Runner:**
     ```sh
-    helm delete --namespace <NAMESPACE> <RELEASE-NAME>
+    helm delete --namespace gitlab-runner gitlab-runner
     ```
+
+7. **Cleanup.** When you finish, remove everything and free the resources:
+    ```sh
+    helm uninstall gitlab-runner --namespace gitlab-runner
+    kubectl delete namespace gitlab-runner
+    helm uninstall gitlab
+    minikube delete
+    ```
+    Also revoke the runner in GitLab (project **Settings > CI/CD > Runners**) and delete the `runnerToken` file `values.yaml` from disk. `minikube delete` removes the cluster, its volumes and the 10 GB VM or container.
 
 Refer to the [GitLab Runner Helm Chart documentation](https://docs.gitlab.com/runner/install/kubernetes.html) for advanced configuration and troubleshooting.

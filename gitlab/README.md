@@ -15,18 +15,18 @@ Labs are ordered from simple to complex. Each lab builds on concepts from the pr
 
 ## Servercore stand
 
-Start with [Servercore onboarding](servercore_gitlab.md) if you have a student VM. GitLab is already installed; use its Kubernetes runner and your kind cluster.
+Если оператор выдал готовый Servercore стенд, начните с [servercore_gitlab.md](servercore_gitlab.md): GitLab уже установлен, jobs выполняются Kubernetes executor в вашем kind. Там описаны runner tags, HTTPS/Registry, DinD и доступ к кластеру через Agent. Устанавливать GitLab из `gitlab_in_kind.md` или `gitlab_in_minikube.md` на этом стенде не нужно.
 
 ## Prerequisites (all labs)
 
-- GitLab account — [gitlab.com](https://gitlab.com) free tier works for every lab.
-- GitLab Runner available (Shared runners are enabled by default on gitlab.com).
+- GitLab account on GitLab.com or the Servercore instance. Cosign public keyless signing requires GitLab.com; paid governance features are optional.
+- An available Docker or Kubernetes executor. On GitLab.com, check hosted runner eligibility and available compute quota before starting.
 - `git` installed locally.
 
 **For local self-hosted GitLab** — see [`gitlab_in_kind.md`](gitlab_in_kind.md).  
 Minimum: 6 CPUs, **16 GiB RAM**, 40 GiB disk. Use **Podman rootful** (not Colima) — rootless mode cannot bind port 80. Allow ~40 min total (20 min waiting for GitLab pods).
 
-> **Kubernetes executor note:** the bundled kind runner uses the Kubernetes executor. If its `config.toml` sets no default `image`, a job without `image:` fails with "no image specified". `gitlab_in_kind.md` sets `image = "alpine:latest"`; declaring `image:` in every job is still the safe habit.
+> **Kubernetes executor note:** the bundled kind runner uses the Kubernetes executor. If its `config.toml` sets no default `image`, a job without `image:` fails with "no image specified". `gitlab_in_kind.md` sets `image = "alpine:3.22"`; declaring `image:` in every job is still the safe habit.
 
 ---
 
@@ -94,11 +94,11 @@ Use GitLab as a Terraform/OpenTofu HTTP state backend. Run `plan → apply → d
 
 **What you learn:**
 - GitLab-managed Terraform state (HTTP backend)
-- `gitlab-terraform` CLI wrapper
-- `plan.json` artifact displayed in MR
+- Pinned OpenTofu jobs with explicit HTTP backend configuration
+- Saved plan and JSON artifacts passed to apply
 - Manual approval gates (`when: manual`)
 
-**Requires:** Runner only
+**Requires:** Container executor, Maintainer/Owner for state writes, GitLab 18.4+ for the artifact access setting
 
 ---
 
@@ -117,7 +117,7 @@ Scan Docker images for CVEs using Trivy inside a GitLab pipeline, then scan the 
 - Failing pipeline on CRITICAL severity
 
 **Requires:** **Privileged runner (DinD)** — works out of the box on gitlab.com shared runners.  
-For local kind: runner must have `privileged: true`.
+For local kind: runner must have `privileged: true`. On the Servercore stand the runner is unprivileged; ask the operator to enable privileged on your VM (see [Servercore onboarding](servercore_gitlab.md)).
 
 > ⚠️ DinD does **not** work in Minikube/kind without a privileged runner.
 
@@ -139,7 +139,7 @@ Sign Docker images using Cosign keyless flow (GitLab OIDC → Sigstore Fulcio) a
 - Admission control patterns (Kyverno)
 
 **Requires:** **Privileged runner (DinD)**, Container Registry enabled, GitLab 16.0+ (for `id_tokens`).  
-Works best on **gitlab.com** — self-hosted needs OIDC issuer configured.
+The public Sigstore flow requires **GitLab.com**. Self-managed needs its own Sigstore infrastructure; configuring OIDC alone is insufficient.
 
 ---
 
@@ -160,7 +160,7 @@ Build a production-grade CD pipeline with parent → first-layer → grand-child
 - CODEOWNERS + protected environments for governance
 - Two infra options: **Path A — AWS**, **Path B — GitLab provider** (no AWS account needed)
 
-**Requires:** Runner, Terraform knowledge, GitLab 16+.  
+**Requires:** Container executor, OpenTofu knowledge, GitLab 18.4+.
 Path A additionally requires AWS credentials.
 
 ---
@@ -168,12 +168,13 @@ Path A additionally requires AWS credentials.
 ## Lab 8 — Full CI/CD: live application and recovery
 
 **File:** [gitlab_ci_lab_full_cycle.md](gitlab_ci_lab_full_cycle.md)
+**Duration:** 2–3 hours after stand setup
 
-Build and scan a web application image, publish the image and Helm OCI chart to GitLab Registry, and deploy through a namespace-scoped Agent to your VM's kind cluster. Verify the deployed commit in the live Release Board.
+Ship a working web application from a monorepo to the student's kind cluster. Build and scan one image, publish the image and Helm OCI chart to GitLab Registry, deploy through a namespace-scoped Agent, then verify the live commit through ingress.
 
-Four break/fix exercises cover an API regression, a synthetic leaked token, a privileged workload and a failed readiness rollout with rollback.
+Includes four break/fix exercises: API regression, synthetic leaked token, privileged workload and failed readiness rollout with rollback.
 
-**Duration:** 2–3 hours after setup. **Requires:** Kubernetes runner tagged `kubernetes` (unprivileged, no DinD: images are built with buildah), trusted Registry HTTPS, Agent and Traefik ingress. See the [complete example](examples/full-cycle).
+**Requires:** Servercore onboarding, Kubernetes executor tagged `kubernetes`, an unprivileged runner without DinD (images are built with buildah), trusted Registry HTTPS, Agent and reachable Traefik ingress. Start after Labs 2 and 5 and the Helm/Agent labs.
 
 ---
 
@@ -216,8 +217,8 @@ Lab 8 (Live full cycle)
 | 2 Monorepo | No | No | ✅ |
 | 3 Components | No | No | ✅ |
 | 4 Terraform | No | No | ✅ |
-| 5 Trivy | **Yes** | **Yes** | ✅ |
-| 6 Cosign | **Yes** | **Yes** | ✅ |
+| 5 Trivy | **Yes** | **Yes** (stand: operator opt-in per VM) | ✅ |
+| 6 Cosign | **Yes** | **Yes** (stand: operator opt-in per VM) | ✅ |
 | 7 Five envs | No | No | ✅ |
 | 8 Full cycle | No (buildah) | No | Student VM runner + Agent |
 

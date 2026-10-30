@@ -18,14 +18,12 @@
 
 ## Prerequisites
 
-- Аккаунт в GitLab (gitlab.com или self-hosted, GitLab **16.4+** — критично для шага 4).
+- Аккаунт на GitLab стенда (GitLab 19.x; `include` с `rules:changes` поддерживается).
 - Установленный `git` локально.
-- Включённый shared runner или собственный runner в проекте.
+- Runner в проекте. На стенде это ваш runner с тегами `lab-1` или `lab-2` и `kubernetes` (точные теги проверьте в **Settings > CI/CD > Runners**). Если job висит в `pending`, добавьте в `.gitlab-ci.yml` блок `default:` с `tags: [lab-1, kubernetes]` (подставьте свои теги) или включите **Run untagged jobs** у runner'а.
 - 30–40 минут.
 
-> Если ваш GitLab ниже 16.4 — `include` с `rules:changes` не поддерживается. На gitlab.com и self-hosted последних версий это не проблема.
-
-> **Kubernetes executor (local kind/Minikube):** если в `config.toml` runner'а не задан `image` по умолчанию, job без `image:` упадёт с ошибкой `no image specified`. Поэтому в примерах ниже у каждого job указан `image:`. На hosted runners gitlab.com default image задан, но явный `image:` не повредит.
+> **Kubernetes executor стенда:** runner работает без привилегий, Docker daemon в jobs нет, образ по умолчанию — `alpine:3.22`. В примерах ниже `image:` указан у каждого job явно.
 
 ---
 
@@ -40,7 +38,7 @@
 Клонируйте проект локально:
 
 ```bash
-git clone https://gitlab.example.com/<your-namespace>/monorepo-ci-lab.git
+git clone https://<gitlab-host>/<your-namespace>/monorepo-ci-lab.git
 cd monorepo-ci-lab
 ```
 
@@ -57,15 +55,15 @@ mkdir -p java python
 echo "// Java app placeholder" > java/App.java
 echo "# Python app placeholder" > python/app.py
 
-# Файлы pipeline-конфигов (пока пустые)
-touch .gitlab-ci.yml java/j.gitlab-ci.yml python/py.gitlab-ci.yml
+# Файлы pipeline-конфигов приложений (пока пустые); корневой .gitlab-ci.yml создадим в шаге 3
+touch java/j.gitlab-ci.yml python/py.gitlab-ci.yml
 ```
 
 Финальная структура:
 
 ```
 monorepo-ci-lab/
-├── .gitlab-ci.yml          # control-plane pipeline
+├── .gitlab-ci.yml          # control-plane pipeline (создаём в шаге 3)
 ├── README.md
 ├── java/
 │   ├── App.java
@@ -98,7 +96,7 @@ stages:
   - deploy
 
 top-level-job:
-  image: alpine:latest
+  image: alpine:3.22
   stage: build
   script:
     - echo "Hello from monorepo root..."
@@ -123,14 +121,14 @@ stages:
 
 java-build-job:
   extends: .java-common
-  image: alpine:latest
+  image: alpine:3.22
   stage: build
   script:
     - echo "Building Java"
 
 java-test-job:
   extends: .java-common
-  image: alpine:latest
+  image: alpine:3.22
   stage: test
   script:
     - echo "Testing Java"
@@ -151,14 +149,14 @@ stages:
 
 python-build-job:
   extends: .python-common
-  image: alpine:latest
+  image: alpine:3.22
   stage: build
   script:
     - echo "Building Python"
 
 python-test-job:
   extends: .python-common
-  image: alpine:latest
+  image: alpine:3.22
   stage: test
   script:
     - echo "Testing Python"
@@ -197,7 +195,7 @@ git push origin main
 Запишите для себя, что вы заметили:
 
 - В каждом job'е нужно прописывать `extends: .<lang>-common` — копипаста на каждой строчке.
-- Нельзя добавить **свои** `rules:` в job, потому что они **переопределят** `rules:` из `.java-common` (extends не объединяет ключи — он заменяет).
+- Нельзя добавить **свои** `rules:` в job, потому что они **переопределят** `rules:` из `.java-common` (`extends` объединяет хеши, но массив `rules:` заменяется целиком).
 - Hidden job (`.java-common`) живёт **внутри** application-pipeline'а, а не в control plane — control plane не знает, что и почему пропустилось.
 
 Дальше мы это исправим.
@@ -206,7 +204,14 @@ git push origin main
 
 ## Шаг 4. Современный подход — `include` + `rules:changes`
 
-С GitLab **16.4** мы можем повесить `rules:changes` **прямо на `include:`**. Это убирает всю boilerplate с extends.
+Мы можем повесить `rules:changes` **прямо на `include:`** (на GitLab 19.x это поддерживается). Это убирает всю boilerplate с extends.
+
+Сначала вернитесь на `main` (после шага 3 вы на ветке `update-java`) и только потом правьте файлы:
+
+```bash
+git checkout main
+git pull
+```
 
 ### Новый `.gitlab-ci.yml`
 
@@ -216,7 +221,7 @@ stages:
   - test
 
 top-level-job:
-  image: alpine:latest
+  image: alpine:3.22
   stage: build
   script:
     - echo "Hello from monorepo root..."
@@ -241,13 +246,13 @@ stages:
   - deploy
 
 java-build-job:
-  image: alpine:latest
+  image: alpine:3.22
   stage: build
   script:
     - echo "Building Java"
 
 java-test-job:
-  image: alpine:latest
+  image: alpine:3.22
   stage: test
   script:
     - echo "Testing Java"
@@ -262,13 +267,13 @@ stages:
   - deploy
 
 python-build-job:
-  image: alpine:latest
+  image: alpine:3.22
   stage: build
   script:
     - echo "Building Python"
 
 python-test-job:
-  image: alpine:latest
+  image: alpine:3.22
   stage: test
   script:
     - echo "Testing Python"
@@ -277,8 +282,6 @@ python-test-job:
 Зафиксируем:
 
 ```bash
-git checkout main
-git pull
 git add .
 git commit -m "modern: include with rules:changes"
 git push origin main
@@ -298,9 +301,10 @@ git push origin main
 
 ```bash
 git checkout -b feature/java-only
+git push origin feature/java-only          # первый pipeline ветки: всё запускается
 echo "// Java incremental change" >> java/App.java
 git commit -am "java only change"
-git push origin feature/java-only
+git push origin feature/java-only          # второй pipeline: фильтрация работает
 ```
 
 В Pipelines второго коммита должны выполниться:
@@ -353,7 +357,7 @@ git push origin feature/both               # второй pipeline
 
 1. Создаёте feature branch **БЕЗ** изменений и сразу пушите её (первый pipeline запустит всё — это ожидаемо).
 2. Все последующие коммиты пушите в уже существующую ветку → `rules:changes` сравнивает diff с предыдущим коммитом, и фильтрация работает.
-3. Альтернатива — открыть MR сразу после первого push: так же, как в шаге 5, фильтрация начинает работать со второго коммита.
+3. Альтернатива — MR-pipeline: он сравнивает изменения с целевой веткой, поэтому фильтрация работает уже в первом MR-pipeline. Но без `workflow:rules` у ветки с открытым MR будут два pipeline (branch и MR) — дубли.
 
 ### Гоча #2 — `'java/*'` vs `'java/**/*'`
 
@@ -372,7 +376,7 @@ include:
 
 ### Добавляем третий сервис — Go
 
-Простое расширение паттерна. Нужны `go.mod` и функция `main()`, иначе `go build` и `go test` упадут:
+Простое расширение паттерна. Нужны `go.mod` и функция `main()`, иначе `go build` и `go test` упадут. `go.mod` создаём вручную, локальный Go не нужен:
 
 ```bash
 mkdir -p go
@@ -385,11 +389,11 @@ func main() {
 	fmt.Println("hello from go")
 }
 EOF
-(cd go && go mod init example/go)
+printf 'module example/go\n\ngo 1.22\n' > go/go.mod
 touch go/go.gitlab-ci.yml
 ```
 
-> Версия в `go.mod` (директива `go`) не должна быть выше версии образа `golang:1.22-alpine` из job'ов ниже. **проверь:** `grep '^go ' go/go.mod`; если версия выше, понизьте её вручную или возьмите более новый образ.
+> Директива `go 1.22` в `go.mod` должна совпадать (или быть ниже) с версией образа `golang:1.22-alpine` из job'ов ниже; при смене образа обновите обе.
 
 `go/go.gitlab-ci.yml`:
 
@@ -428,7 +432,9 @@ include:
       - changes: ['go/**/*']
 ```
 
-Push и проверьте: при изменении только в `go/` — стартует только Go pipeline.
+(Остальное в `.gitlab-ci.yml` — `stages` и `top-level-job` — без изменений.)
+
+Push и проверьте (как в шаге 5: сначала первый push новой ветки, затем коммит с изменением): при изменении только в `go/` стартуют `top-level-job` и `go-*`, Java и Python jobs отсутствуют.
 
 ### Гоча #3 — общий код
 

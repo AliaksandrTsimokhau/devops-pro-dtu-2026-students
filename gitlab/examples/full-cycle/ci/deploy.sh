@@ -59,5 +59,5 @@ for attempt in $(seq 1 15); do
   fi
   sleep 2
 done
-[ "$verified" = true ] || { echo 'Ingress did not serve the expected commit' >&2; exit 1; }
+[ "$verified" = true ] || { echo "Ingress did not serve the expected commit (tried port ${INGRESS_PORT:-80}; set INGRESS_PORT if the ingress listens elsewhere)" >&2; exit 1; }
 echo "Verified http://${APP_HOST} at commit ${CI_COMMIT_SHA}"

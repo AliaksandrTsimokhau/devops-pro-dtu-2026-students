@@ -23,11 +23,15 @@
     # vfs and chroot isolation need no privileges, device access or user namespaces.
     STORAGE_DRIVER: vfs
     BUILDAH_ISOLATION: chroot
+  before_script:
+    - 'command -v buildah >/dev/null || { echo "buildah is missing, because BUILDAH_IMAGE is not set and the job ran in the default image of the runner. Copy .gitlab-ci.yml together with .gitlab/ci/web.yml."; exit 1; }'
 
 .skopeo:
   image:
     name: $SKOPEO_IMAGE
     entrypoint: [""]
+  before_script:
+    - 'command -v skopeo >/dev/null || { echo "skopeo is missing, because SKOPEO_IMAGE is not set and the job ran in the default image of the runner. Copy .gitlab-ci.yml together with .gitlab/ci/web.yml."; exit 1; }'
 
 go-tests:
   stage: verify

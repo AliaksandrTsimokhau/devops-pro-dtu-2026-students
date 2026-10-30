@@ -47,3 +47,32 @@ subjects:
   - kind: ServiceAccount
     name: release-board-agent
     namespace: {{ .Release.Namespace }}
+---
+# The Agent elects its leader with a Lease in its own namespace; without this it logs "Error retrieving lease lock" and
+# never serves CI jobs; it also records events about it. The permissions cover this namespace only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-board-agent-leader
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-board-agent-leader
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-board-agent-leader
+subjects:
+  - kind: ServiceAccount
+    name: release-board-agent
+    namespace: {{ .Release.Namespace }}

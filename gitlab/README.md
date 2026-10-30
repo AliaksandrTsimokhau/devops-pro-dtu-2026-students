@@ -173,7 +173,7 @@ Build and scan a web application image, publish the image and Helm OCI chart to 
 
 Four break/fix exercises cover an API regression, a synthetic leaked token, a privileged workload and a failed readiness rollout with rollback.
 
-**Duration:** 2–3 hours after setup. **Requires:** Kubernetes runner tagged `kubernetes`, privileged DinD on your training VM, trusted Registry HTTPS, Agent and Traefik ingress. See the [complete example](examples/full-cycle).
+**Duration:** 2–3 hours after setup. **Requires:** Kubernetes runner tagged `kubernetes` (unprivileged, no DinD: images are built with kaniko), trusted Registry HTTPS, Agent and Traefik ingress. See the [complete example](examples/full-cycle).
 
 ---
 
@@ -219,7 +219,7 @@ Lab 8 (Live full cycle)
 | 5 Trivy | **Yes** | **Yes** | ✅ |
 | 6 Cosign | **Yes** | **Yes** | ✅ |
 | 7 Five envs | No | No | ✅ |
-| 8 Full cycle | **Yes** | **Yes** | Student VM runner + Agent |
+| 8 Full cycle | No (kaniko) | No | Student VM runner + Agent |
 
 ---
 

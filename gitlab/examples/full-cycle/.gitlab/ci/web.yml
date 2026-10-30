@@ -14,18 +14,16 @@
   variables:
     TRIVY_NO_PROGRESS: "true"
 
-.docker:
-  image: $DOCKER_IMAGE
-  services:
-    - name: $DIND_IMAGE
-      alias: docker
-      command: ["--mtu=1450"]
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-  before_script:
-    - 'for attempt in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done'
-    - docker info
+# Images are built and pushed without a Docker daemon, so the runner needs no privileged pods.
+.kaniko:
+  image:
+    name: $KANIKO_IMAGE
+    entrypoint: [""]
+
+.skopeo:
+  image:
+    name: $SKOPEO_IMAGE
+    entrypoint: [""]
 
 go-tests:
   stage: verify
@@ -90,11 +88,18 @@ security-config:
     expire_in: 1 week
 
 build-image:
-  extends: .docker
+  extends: .kaniko
   stage: build
   script:
-    - docker build --pull --build-arg APP_VERSION="$CI_COMMIT_SHA" --tag "$IMAGE_REF" apps/web
-    - docker save --output image.tar "$IMAGE_REF"
+    # --no-push with --tar-path saves the image as an archive: the same bytes are scanned and then published.
+    - >-
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR/apps/web"
+      --dockerfile "$CI_PROJECT_DIR/apps/web/Dockerfile"
+      --build-arg APP_VERSION="$CI_COMMIT_SHA"
+      --destination "$IMAGE_REF"
+      --no-push
+      --tar-path image.tar
   artifacts:
     access: maintainer
     paths: [image.tar]
@@ -113,15 +118,13 @@ scan-image:
     expire_in: 1 week
 
 publish-image:
-  extends: [.docker, .on-default]
+  extends: [.skopeo, .on-default]
   stage: publish
   needs: [build-image, scan-image]
   script:
-    - docker load --input image.tar
-    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
-    - docker push "$IMAGE_REF"
-    - 'IMAGE_DIGEST=$(docker inspect --format="{{index .RepoDigests 0}}" "$IMAGE_REF" | sed "s/.*@//")'
-    - 'printf "IMAGE_DIGEST=%s\n" "$IMAGE_DIGEST" > release.env'
+    - echo "$CI_REGISTRY_PASSWORD" | skopeo login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+    - skopeo copy --digestfile digest.txt docker-archive:image.tar "docker://$IMAGE_REF"
+    - 'printf "IMAGE_DIGEST=%s\n" "$(cat digest.txt)" > release.env'
   artifacts:
     reports:
       dotenv: release.env

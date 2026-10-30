@@ -16,7 +16,7 @@ Start with [Servercore onboarding](servercore_gitlab.md), [Runner](gitlab_runner
 | Helm rollout, Helm test and ingress smoke check | Verify readiness, service routing and the actual deployed commit |
 | Serialized deploys and automatic rollback | Keep a failed release from replacing the last working version |
 
-The Kubernetes executor runs jobs in the student's kind cluster. Docker-in-Docker builds the image. GitLab Agent gives deployment jobs access through a namespace-scoped service account. Traefik serves the application on the VM. The Helm chart uses a digest-pinned private image, two replicas, probes, resource requests, a disruption budget and a non-root container with a read-only filesystem.
+The Kubernetes executor runs jobs in the student's kind cluster. Kaniko builds the image without a Docker daemon and saves it as an archive; skopeo publishes that same archive. GitLab Agent gives deployment jobs access through a namespace-scoped service account. Traefik serves the application on the VM. The Helm chart uses a digest-pinned private image, two replicas, probes, resource requests, a disruption budget and a non-root container with a read-only filesystem.
 
 ## 1. Prepare the project and stand
 
@@ -31,12 +31,12 @@ The example source is [gitlab/examples/full-cycle](examples/full-cycle). Its lay
 
 Ask the operator to check these stand prerequisites before the first push:
 
-- The runner has tag `kubernetes`, accepts this project's branches and uses the Kubernetes executor. Enable privileged DinD only for this student's VM using the onboarding procedure. This is an isolated training VM; privileged builds are unsuitable for untrusted shared tenants.
-- GitLab and its Registry have trusted HTTPS certificates and resolve correctly from runner jobs, DinD and kind nodes. Do not add insecure-registry or skip-TLS flags.
+- The runner has tag `kubernetes`, accepts this project's branches and uses the Kubernetes executor. The runner stays unprivileged: the pipeline needs no Docker-in-Docker, no `docker:dind` service and no privileged pods.
+- GitLab and its Registry have trusted HTTPS certificates and resolve correctly from runner jobs and kind nodes. Do not add insecure-registry or skip-TLS flags.
 - Traefik is installed in kind. The VM has a stable public address and ingress ports exposed to the student's allowed source CIDRs: `lab_public_ip_mode = "static"`, `lab_ingress_ports = [80, 443]` in the stand configuration. Apply infrastructure changes through the operator's normal workflow.
 - Jobs can reach the VM's private ingress address. Browsers reach its public address. Do not use the public address for CI's internal smoke check if the cloud network lacks hairpin routing.
 
-Protect the default branch, use merge requests, require successful pipelines before merging and enable GitLab's prevention of outdated deployment jobs. Limit who can edit CI or merge changes. A privileged runner and a deployment token require trusted project members.
+Protect the default branch, use merge requests, require successful pipelines before merging and enable GitLab's prevention of outdated deployment jobs. Limit who can edit CI or merge changes. A deployment token requires trusted project members.
 
 ## 2. Give deployments access to one namespace
 

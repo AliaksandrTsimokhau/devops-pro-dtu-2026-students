@@ -30,8 +30,8 @@ variables:
   NODE_IMAGE: node:24.22.2-bookworm-slim
   HELM_IMAGE: alpine/helm:4.3.1
   TRIVY_IMAGE: aquasec/trivy:0.76.1
-  DOCKER_IMAGE: docker:29.9.2-cli
-  DIND_IMAGE: docker:29.9.2-dind
+  KANIKO_IMAGE: gcr.io/kaniko-project/executor:v1.23.2-debug
+  SKOPEO_IMAGE: quay.io/skopeo/stable:v1.22.3
   IMAGE_REF: $CI_REGISTRY_IMAGE/web:$CI_COMMIT_SHA
   KUBE_NAMESPACE: full-cycle-$CI_PROJECT_ID
   RELEASE: release-board
